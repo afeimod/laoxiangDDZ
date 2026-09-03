@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 资源收缩白名单：
+     牌面(card_*)与头像(avatar_*)经 resources.getIdentifier() 动态加载，
+     压缩器无法静态识别引用，若不显式保留将在 release 构建中被删除 -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/avatar_*,@drawable/card_*" />

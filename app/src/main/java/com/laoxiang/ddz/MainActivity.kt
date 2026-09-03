@@ -29,17 +29,17 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             LaoXiangDDZTheme {
-                LaoXiangApp()
+                LaoXiangRoot()
             }
         }
     }
 }
 
-/** 简单路由 */
+/** 简单路由（与 Application 类 LaoXiangApp 同名会冲突，故叫 Root） */
 private enum class Page { LOBBY, ROOM, GAME }
 
 @Composable
-fun LaoXiangApp() {
+fun LaoXiangRoot() {
     val gameVm: GameViewModel = viewModel()
     var page by remember { mutableStateOf(Page.LOBBY) }
     val snapshot by gameVm.snapshot.collectAsState()

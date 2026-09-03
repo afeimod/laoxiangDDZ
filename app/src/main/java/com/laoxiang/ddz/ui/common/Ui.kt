@@ -24,7 +24,7 @@ import com.laoxiang.ddz.R
 import com.laoxiang.ddz.ui.theme.*
 
 /** 头像资源缓存 */
-private val avatarResCache = HashMap<Int, Int>()
+private val avatarResCache = HashMap<String, Int>()
 
 fun avatarRes(avatar: Int, context: android.content.Context): Int {
     val idx = avatar.coerceIn(1, 12).toString().padStart(2, '0')

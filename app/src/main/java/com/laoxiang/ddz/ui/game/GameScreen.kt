@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -733,7 +734,7 @@ private fun HandRow(
             .padding(horizontal = 6.dp)
     ) {
         val overlap = if (hand.size > 13) cardW * 0.34f else cardW * 0.44f
-        val totalW = cardW + (hand.size - 1).coerceAtLeast(0) * (cardW - overlap)
+        val totalW = cardW + (cardW - overlap) * (hand.size - 1).coerceAtLeast(0)
         val scrollable = totalW > maxWidth
         if (scrollable) {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(-overlap)) {
