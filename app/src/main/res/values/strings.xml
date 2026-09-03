@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">老乡斗地主</string>
+    <string name="lobby_subtitle">咱村儿的牌桌 · 单机 + 局域网</string>
+    <string name="btn_single">单人对战</string>
+    <string name="btn_host">我是房主 · 开一桌</string>
+    <string name="btn_join">串门 · 加入牌局</string>
+    <string name="setting_table">牌桌样式</string>
+    <string name="setting_sound">出牌音效</string>
+    <string name="setting_music">背景音乐</string>
+    <string name="counter_title">记牌器（外界剩余）</string>
+    <string name="chat_title">快捷喊话</string>
+    <string name="exit_confirm">确定要离桌吗？</string>
+</resources>

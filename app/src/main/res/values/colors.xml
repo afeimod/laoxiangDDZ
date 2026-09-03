@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="chinese_red">#C62828</color>
+    <color name="deep_red">#8E1414</color>
+    <color name="gold">#D4A24E</color>
+    <color name="light_gold">#EBCB8C</color>
+    <color name="cream">#FFF3E0</color>
+    <color name="ink">#2B1A12</color>
+    <color name="ic_launcher_background">#B71C1C</color>
+</resources>

@@ -1,0 +1,145 @@
+# ============================================================
+#  老乡斗地主 · GitHub Actions 云构建
+#
+#  仅手动触发（无 push / PR / 定时等任何自动触发）：
+#    仓库页 → Actions 标签 → 左侧选 "Build APK" → Run workflow
+#    → 选择构建类型 → 点绿色按钮开跑 → 跑完在该次运行页底部
+#      Artifacts 区域下载 APK
+#
+#  正式签名（可选）：在仓库 Settings → Secrets and variables →
+#  Actions 添加以下 4 个 Secrets，云构建的 release 包即用正式签名；
+#  不配置则自动回退 debug 签名（APK 可直接安装，仅不能上架商店）：
+#    RELEASE_KEYSTORE_BASE64     keystore 文件的 base64（base64 -w0 xxx.jks）
+#    RELEASE_KEYSTORE_PASSWORD   keystore 密码
+#    RELEASE_KEY_ALIAS           别名
+#    RELEASE_KEY_PASSWORD        别名密码
+# ============================================================
+name: Build APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: '构建类型：debug=调试包 / release=发布包 / all=两者'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - debug
+          - release
+          - all
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: 构建 APK（手动触发）
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BUILD_TYPE: ${{ inputs.build_type }}
+      # 可选正式签名（经环境变量传递，避免内联注入）
+      KS_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+      KS_PASS: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+      KS_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+      KEY_PASS: ${{ secrets.RELEASE_KEY_PASSWORD }}
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      # 兜底：正常情况工程就在仓库根目录；若仓库里只放了一个源码 zip，
+      # 则先解压再自动定位 settings.gradle(.kts) 所在的工程目录
+      - name: 定位工程目录（仓库只放源码 zip 时自动解压）
+        id: locate
+        run: |
+          set -e
+          if [ -f settings.gradle.kts ] || [ -f settings.gradle ]; then
+            echo "工程位于仓库根目录"
+            echo "project_dir=." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          SRC_ZIP="$(ls -1 ./*.zip 2>/dev/null | head -n1 || true)"
+          if [ -n "$SRC_ZIP" ]; then
+            echo "检出源码包：$SRC_ZIP，解压到仓库根"
+            unzip -q -o "$SRC_ZIP" -d .
+          fi
+          # 解压（根级布局的包）后可能直接出现在根目录，需复查
+          if [ -f settings.gradle.kts ] || [ -f settings.gradle ]; then
+            echo "解压后工程位于仓库根目录"
+            echo "project_dir=." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 兼容带外层文件夹的包：在子目录中定位 settings 文件
+          SETTINGS="$(find . -mindepth 2 -maxdepth 3 \
+            \( -name settings.gradle.kts -o -name settings.gradle \) \
+            -not -path './.git/*' | head -n1 || true)"
+          if [ -z "$SETTINGS" ]; then
+            echo "::error::仓库里找不到工程（settings.gradle.kts），请推送完整源码或源码 zip"
+            exit 1
+          fi
+          PROJ="$(dirname "$SETTINGS")"
+          echo "工程目录：$PROJ"
+          echo "project_dir=$PROJ" >> "$GITHUB_OUTPUT"
+
+      - name: 安装 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # setup-gradle 自动接入 Gradle 依赖缓存；gradle-version 仅作
+      # wrapper 意外缺失时的兜底（正常路径优先使用工程自带 gradlew）
+      - name: 配置 Gradle（含缓存）
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: 准备正式签名（未配置 Secrets 时自动跳过）
+        if: env.BUILD_TYPE != 'debug' && env.KS_B64 != ''
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        run: |
+          set -e
+          printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          echo "RELEASE_STORE_FILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+          echo "RELEASE_STORE_PASSWORD=$KS_PASS"  >> "$GITHUB_ENV"
+          echo "RELEASE_KEY_ALIAS=$KS_ALIAS"      >> "$GITHUB_ENV"
+          echo "RELEASE_KEY_PASSWORD=$KEY_PASS"   >> "$GITHUB_ENV"
+          echo "正式签名已启用，别名：$KS_ALIAS"
+
+      - name: 构建 APK
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        run: |
+          set -e
+          GRADLE="gradle"
+          if [ -f ./gradlew ]; then
+            chmod +x ./gradlew
+            GRADLE="./gradlew"
+          fi
+          case "$BUILD_TYPE" in
+            debug)   TASKS="assembleDebug" ;;
+            release) TASKS="assembleRelease" ;;
+            *)       TASKS="assembleDebug assembleRelease" ;;
+          esac
+          echo ">>> $GRADLE $TASKS"
+          $GRADLE $TASKS --stacktrace --no-daemon
+
+      - name: 汇总构建产物
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        run: |
+          set -e
+          echo "构建类型：$BUILD_TYPE"
+          find . -path '*/build/outputs/apk/*' -name '*.apk' \
+            -printf '产物：%p（%k KB）\n' || true
+
+      - name: 上传 APK 到 Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: LaoXiangDouDizhu-APK-${{ inputs.build_type }}-r${{ github.run_number }}
+          path: '**/build/outputs/apk/**/*.apk'
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ 数据提取规则 -->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="sharedpref" path="laoxiang_ddz.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="sharedpref" path="laoxiang_ddz.xml" />
+    </device-transfer>
+</data-extraction-rules>

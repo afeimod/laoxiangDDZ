@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 主题：游戏自绘背景，XML 层保持暖色 -->
+    <style name="Theme.LaoXiangDDZ" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">@color/deep_red</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
