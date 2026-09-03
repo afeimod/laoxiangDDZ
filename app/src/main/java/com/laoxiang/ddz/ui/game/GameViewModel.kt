@@ -50,8 +50,8 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
     /** 当前快照（任意模式统一） */
     val snapshot = MutableStateFlow<GameSnapshot?>(null)
 
-    /** 我的座位 */
-    val mySeat = MutableStateFlow(0)
+    /** 我的座位（-1 = 未上桌；防止加入牌局页误判为已加入） */
+    val mySeat = MutableStateFlow(-1)
 
     /** 选中的牌 id */
     val selected = MutableStateFlow<Set<Int>>(emptySet())
@@ -102,7 +102,8 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
             is Fx.RobPass -> sound.play("buqiang")
             is Fx.Played -> sound.play("play")
             is Fx.Pass -> sound.play("pass")
-            is Fx.Bomb -> sound.play("wangzha")
+            // 王炸（双王）才用王炸音效；普通炸弹用专用爆炸音效
+            is Fx.Bomb -> sound.play(if (f.rocket) "wangzha" else "bomb")
             is Fx.Plane -> sound.play("plane")
             is Fx.GameOver -> sound.play(
                 if ((f.landlordWon && mySeat.value == snapshot.value?.landlord) ||
@@ -228,6 +229,7 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
 
     fun startHost() {
         mode.value = GameMode.HOST
+        mySeat.value = 0
         val h = LanHost(
             hostName = prefs.nickname.ifBlank { "房主" },
             hostAvatar = prefs.avatar,
@@ -354,6 +356,18 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
         val cur = selected.value
         selected.value = if (cardId in cur) cur - cardId else cur + cardId
         if (selected.value.isNotEmpty()) sound.play("select", 0.6f)
+        hintCards.value = null
+        hintIndex = -1
+    }
+
+    /** 滑动多选：扫过的牌只加不减，带轻点音效 */
+    fun selectCards(ids: Collection<Int>) {
+        if (ids.isEmpty()) return
+        val cur = selected.value
+        val add = ids.filter { it !in cur }
+        if (add.isEmpty()) return
+        selected.value = cur + add
+        sound.play("select", 0.45f)
         hintCards.value = null
         hintIndex = -1
     }
@@ -504,6 +518,7 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
         chatBubbles.value = emptyList()
         selected.value = emptySet()
         connectState.value = null
+        mySeat.value = -1          // 下桌后回到“未上桌”状态，重新进加入页可先选牌局
     }
 
     override fun onCleared() {
@@ -544,6 +559,9 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
         prefs.soundEnabled = on
         sound.soundEnabled = on
     }
+
+    /** UI 层直接播放短音效（发牌逐张等） */
+    fun sfx(key: String, vol: Float = 1f) = sound.play(key, vol)
 
     fun musicSettings(on: Boolean) {
         prefs.musicEnabled = on

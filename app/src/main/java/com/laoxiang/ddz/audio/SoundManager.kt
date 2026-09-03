@@ -17,7 +17,9 @@ import com.laoxiang.ddz.R
  *  sfx_qiang      抢地主语音
  *  sfx_buqiang    不抢语音
  *  sfx_pass       要不起语音
- *  sfx_wangzha    王炸/炸弹
+ *  sfx_bomb       普通炸弹（闷响爆炸）
+ *  sfx_wangzha    王炸（双王火箭）专用
+ *  sfx_deal       发牌单张"啩嗒"声
  *  sfx_plane      飞机
  *  sfx_win        赢牌
  *  sfx_lose       输牌
@@ -51,7 +53,9 @@ class SoundManager(private val context: Context) {
         ids["qiang"] = pool.load(context, R.raw.sfx_qiang, 1)
         ids["buqiang"] = pool.load(context, R.raw.sfx_buqiang, 1)
         ids["pass"] = pool.load(context, R.raw.sfx_pass, 1)
+        ids["bomb"] = pool.load(context, R.raw.sfx_bomb, 1)
         ids["wangzha"] = pool.load(context, R.raw.sfx_wangzha, 1)
+        ids["deal"] = pool.load(context, R.raw.sfx_deal, 1)
         ids["plane"] = pool.load(context, R.raw.sfx_plane, 1)
         ids["win"] = pool.load(context, R.raw.sfx_win, 1)
         ids["lose"] = pool.load(context, R.raw.sfx_lose, 1)

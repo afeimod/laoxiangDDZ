@@ -18,6 +18,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
@@ -35,9 +37,13 @@ import com.laoxiang.ddz.data.Deck
 import com.laoxiang.ddz.data.LastActionType
 import com.laoxiang.ddz.data.SeatView
 import com.laoxiang.ddz.ui.common.AvatarImage
+import com.laoxiang.ddz.ui.common.AvatarImageRes
 import com.laoxiang.ddz.ui.theme.*
 
 // ------------------------------------------------ 牌面资源
+
+/** 卡牌图宽高比（500x726） */
+const val CARD_RATIO = 0.689f
 
 private val cardResCache = HashMap<String, Int>()
 
@@ -68,6 +74,7 @@ fun PokerCard(
     Box(
         modifier
             .width(width)
+            .aspectRatio(CARD_RATIO)
             .graphicsLayer {
                 translationY = -lift * width.toPx() * 0.28f
                 shadowElevation = if (raised) 12f else 4f
@@ -81,14 +88,12 @@ fun PokerCard(
             Image(
                 painter = painterResource(res),
                 contentDescription = card.displayLabel,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxWidth()
+                contentScale = ContentScale.FillBounds,
+                modifier = Modifier.fillMaxSize()
             )
         } else {
             Box(
-                Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(0.72f),
+                Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -116,7 +121,7 @@ fun CardBack(width: Dp, modifier: Modifier = Modifier) {
     )
 }
 
-/** 出牌区：一排小牌 */
+/** 出牌区：一排小牌（宽度自适应，牌再多也不超出可用宽度） */
 @Composable
 fun PlayedCards(
     cards: List<Card>,
@@ -125,19 +130,31 @@ fun PlayedCards(
     overlap: Boolean = true
 ) {
     if (cards.isEmpty()) return
-    LazyRow(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(if (overlap) (-cardWidth * 0.42f) else 3.dp)
-    ) {
-        items(cards, key = { it.id }) { c ->
-            PokerCard(c, cardWidth)
+    BoxWithConstraints(modifier) {
+        val n = cards.size
+        val w: Dp
+        val spacing: Dp
+        if (overlap) {
+            // 每张露出 58%，相邻重叠 42%（spacedBy 负间距语义：step = w*(1-frac)）
+            val visible = 0.58f
+            val k = 1f + (n - 1) * visible
+            w = cardWidth.coerceAtMost(maxWidth / k)
+            spacing = -(w * (1f - visible))
+        } else {
+            w = cardWidth.coerceAtMost((maxWidth - 3.dp * (n - 1)) / n)
+            spacing = 3.dp
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(spacing)) {
+            cards.forEach { c ->
+                PokerCard(c, w)
+            }
         }
     }
 }
 
 // ------------------------------------------------ 座位块
 
-/** 对手信息块（头像 / 名字 / 剩牌数 / 地主帽 / 聊天气泡） */
+/** 对手信息块（对标欢乐斗地主：头像 + 剩牌数蓝块并排，名字在下，含地主帽/聊天气泡） */
 @Composable
 fun OpponentBlock(
     seat: SeatView,
@@ -155,31 +172,38 @@ fun OpponentBlock(
             Bubble(t)
             Spacer(Modifier.height(4.dp))
         }
-        Box {
-            AvatarImage(
-                seat.avatar, 46.dp,
-                Modifier
-                    .border(
-                        2.5.dp,
-                        when {
-                            seat.isTurn -> Color(0xFFFFC107)
-                            seat.isLandlord -> Gold
-                            else -> Color.Transparent
-                        }, CircleShape
-                    )
-            )
-            if (seat.isLandlord) {
-                // 地主小帽标
-                Box(
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box {
+                AvatarImageRes(
+                    // 非地主=默认老乡头像；当地主后自动换成富翁地主头像
+                    tableAvatarRes(seat), 50.dp,
                     Modifier
-                        .align(Alignment.TopCenter)
-                        .offset(y = (-9).dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color(0xFFD4A24E))
-                        .padding(horizontal = 5.dp, vertical = 1.dp)
-                ) {
-                    Text("地主", fontSize = 9.sp, color = Color(0xFF4E2600), fontWeight = FontWeight.Black)
+                        .border(
+                            2.5.dp,
+                            when {
+                                seat.isTurn -> Color(0xFFFFC107)
+                                seat.isLandlord -> Gold
+                                else -> Color(0x66FFFFFF)
+                            }, CircleShape
+                        )
+                )
+                if (seat.isLandlord) {
+                    // 地主小帽标
+                    Box(
+                        Modifier
+                            .align(Alignment.TopCenter)
+                            .offset(y = (-9).dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFFD4A24E))
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    ) {
+                        Text("地主", fontSize = 9.sp, color = Color(0xFF4E2600), fontWeight = FontWeight.Black)
+                    }
                 }
+            }
+            if (showCards) {
+                Spacer(Modifier.width(7.dp))
+                CountTile(seat.handCount)
             }
         }
         Spacer(Modifier.height(3.dp))
@@ -189,18 +213,29 @@ fun OpponentBlock(
             color = if (seat.isTurn) Color(0xFFFFE082) else Color(0xCCFFFFFF),
             maxLines = 1
         )
-        if (showCards) {
-            Spacer(Modifier.height(2.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                CardBack(cardWidth * 0.7f)
-                Text(
-                    " ${seat.handCount}",
-                    fontSize = 13.sp,
-                    color = Color(0xFFFFE082),
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
+    }
+}
+
+/** 剩牌数蓝块（对标欢乐斗地主的「17」方块） */
+@Composable
+private fun CountTile(n: Int) {
+    val shape = RoundedCornerShape(9.dp)
+    Box(
+        Modifier
+            .shadow(3.dp, shape)
+            .clip(shape)
+            .background(
+                Brush.verticalGradient(listOf(Color(0xFF4E7CD0), Color(0xFF2E55A0)))
+            )
+            .border(1.dp, Color(0x88FFFFFF), shape)
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+    ) {
+        Text(
+            "$n",
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Black,
+            color = Color.White
+        )
     }
 }
 
@@ -247,11 +282,11 @@ fun CardCounterPanel(
     Column(
         modifier
             .clip(RoundedCornerShape(10.dp))
-            .background(Color(0x99380D08))
-            .border(1.dp, Color(0x66D4A24E), RoundedCornerShape(10.dp))
+            .background(Color(0xB3163A6E))
+            .border(1.dp, Color(0x66A8C8F0), RoundedCornerShape(10.dp))
             .padding(8.dp)
     ) {
-        Text("记牌器（外界剩余）", fontSize = 10.sp, color = Color(0xCCFFD9A0))
+        Text("记牌器（外界剩余）", fontSize = 10.sp, color = Color(0xCCD7E7FA))
         Spacer(Modifier.height(4.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
             (3..15).forEach { r ->
@@ -275,48 +310,6 @@ fun CardCounterPanel(
                 Text("王", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFFE082))
                 Text("$jokers", fontSize = 9.sp, color = Color.White)
             }
-        }
-    }
-}
-
-// ------------------------------------------------ 底牌区
-
-@Composable
-fun BottomCardsBar(
-    bottom: List<Card>,
-    multiplier: Int,
-    landlordName: String?,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(Color(0x88261007))
-            .border(1.dp, Color(0x66D4A24E), RoundedCornerShape(10.dp))
-            .padding(horizontal = 10.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text("底牌", fontSize = 11.sp, color = Color(0xCCFFD9A0))
-        Spacer(Modifier.width(6.dp))
-        bottom.forEach { c ->
-            PokerCard(c, 26.dp)
-            Spacer(Modifier.width(2.dp))
-        }
-        Spacer(Modifier.width(8.dp))
-        Text(
-            "×$multiplier",
-            color = Gold,
-            fontWeight = FontWeight.Black,
-            fontSize = 17.sp
-        )
-        if (landlordName != null) {
-            Spacer(Modifier.width(6.dp))
-            Text(
-                "地主 $landlordName",
-                fontSize = 11.sp,
-                color = Color(0xCCFFD9A0),
-                maxLines = 1
-            )
         }
     }
 }

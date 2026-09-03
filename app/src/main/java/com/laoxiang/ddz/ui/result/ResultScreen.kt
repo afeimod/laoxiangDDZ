@@ -6,8 +6,12 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,7 +28,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.laoxiang.ddz.R
-import com.laoxiang.ddz.ui.common.AvatarImage
+import com.laoxiang.ddz.ui.common.AvatarImageRes
 import com.laoxiang.ddz.ui.common.GoldButton
 import com.laoxiang.ddz.ui.common.OutlineGoldButton
 import com.laoxiang.ddz.ui.game.GameMode
@@ -36,7 +40,7 @@ import kotlinx.coroutines.launch
 import kotlin.random.Random
 
 /**
- * 结算页：胜负横幅 + 春天/倍数 + 分数变化 + 金元宝雨
+ * 结算页：胜负横幅 + 春天/倍数 + 分数变化 + 金元宝雨；退出按钮固定右上角
  */
 @Composable
 fun ResultScreen(
@@ -86,91 +90,118 @@ fun ResultScreen(
             }
         }
 
-        Column(
+        // 中央内容：横屏高度不够时可滚动兑底
+        Box(
             Modifier
                 .fillMaxSize()
                 .systemBarsPadding()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+                .padding(horizontal = 40.dp),
+            contentAlignment = Alignment.Center
         ) {
-            // 胜负横幅
-            val bannerScale = remember { Animatable(0.3f) }
-            LaunchedEffect(Unit) {
-                bannerScale.animateTo(1f, tween(400))
-            }
-            Text(
-                when {
-                    iWon && result.isSpring -> "春 天 ！"
-                    iWon && result.isAntiSpring -> "闷 牌 胜 ！"
-                    iWon -> "赢 了 ！"
-                    else -> "输 了 …"
-                },
-                fontSize = 46.sp,
-                fontWeight = FontWeight.Black,
-                color = if (iWon) Color(0xFFFFD54F) else Color(0xFFFF8A80),
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .scale(bannerScale.value)
-                    .background(Color(0x665D1010), RoundedCornerShape(18.dp))
-                    .padding(horizontal = 30.dp, vertical = 8.dp)
-            )
-
-            Spacer(Modifier.height(22.dp))
-
-            // 我的信息
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFF6FFF3E0)),
-                modifier = Modifier.fillMaxWidth()
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Column(Modifier.padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    val me = snap.seats.first { it.seat == mySeat }
-                    AvatarImage(me.avatar, 56.dp)
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "${me.name} · ${if (iAmLandlord) "地主" else "农民"}",
-                        fontWeight = FontWeight.Bold, color = DeepRed
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        ResultStat("本局倍数", "×${result.multiplier}")
-                        ResultStat(
-                            "欢乐豆",
-                            (if (gameVm.lastScore.collectAsState().value >= 0) "+" else "") +
-                                    gameVm.lastScore.collectAsState().value
+                // 胜负横幅
+                val bannerScale = remember { Animatable(0.3f) }
+                LaunchedEffect(Unit) {
+                    bannerScale.animateTo(1f, tween(400))
+                }
+                Text(
+                    when {
+                        iWon && result.isSpring -> "春 天 ！"
+                        iWon && result.isAntiSpring -> "闷 牌 胜 ！"
+                        iWon -> "赢 了 ！"
+                        else -> "输 了 …"
+                    },
+                    fontSize = 38.sp,
+                    fontWeight = FontWeight.Black,
+                    color = if (iWon) Color(0xFFFFD54F) else Color(0xFFFF8A80),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .scale(bannerScale.value)
+                        .background(Color(0x665D1010), RoundedCornerShape(18.dp))
+                        .padding(horizontal = 30.dp, vertical = 6.dp)
+                )
+
+                Spacer(Modifier.height(14.dp))
+
+                // 我的信息
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF6FFF3E0)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        val me = snap.seats.first { it.seat == mySeat }
+                        // 非地主=默认头像；地主=富翁地主头像（与牌桌一致）
+                        AvatarImageRes(
+                            if (iAmLandlord) com.laoxiang.ddz.R.drawable.avatar_landlord
+                            else com.laoxiang.ddz.R.drawable.avatar_default,
+                            46.dp
                         )
-                        ResultStat("总战绩", "${gameVm.prefs.wins}胜${gameVm.prefs.losses}负")
-                    }
-                    if (result.isSpring) {
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(5.dp))
                         Text(
-                            "春天！农民一张未出，倍数翻番",
-                            fontSize = 12.sp, color = Color(0xFF9C2B1F)
+                            "${me.name} · ${if (iAmLandlord) "地主" else "农民"}",
+                            fontWeight = FontWeight.Bold, color = DeepRed
                         )
-                    }
-                    if (result.isAntiSpring) {
                         Spacer(Modifier.height(8.dp))
-                        Text(
-                            "反春闷牌！地主只出一手，倍数翻番",
-                            fontSize = 12.sp, color = Color(0xFF9C2B1F)
-                        )
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            ResultStat("本局倍数", "×${result.multiplier}")
+                            ResultStat(
+                                "欢乐豆",
+                                (if (gameVm.lastScore.collectAsState().value >= 0) "+" else "") +
+                                        gameVm.lastScore.collectAsState().value
+                            )
+                            ResultStat("总战绩", "${gameVm.prefs.wins}胜${gameVm.prefs.losses}负")
+                        }
+                        if (result.isSpring) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "春天！农民一张未出，倍数翻番",
+                                fontSize = 12.sp, color = Color(0xFF9C2B1F)
+                            )
+                        }
+                        if (result.isAntiSpring) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "反春闷牌！地主只出一手，倍数翻番",
+                                fontSize = 12.sp, color = Color(0xFF9C2B1F)
+                            )
+                        }
                     }
                 }
-            }
 
-            Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.height(14.dp))
 
-            if (gameVm.mode.collectAsState().value == GameMode.CLIENT) {
-                OutlineGoldButton("回房间等房主再开") { onAgain() }
-            } else {
-                GoldButton("再来一局") { onAgain() }
+                if (gameVm.mode.collectAsState().value == GameMode.CLIENT) {
+                    OutlineGoldButton("回房间等房主再开") { onAgain() }
+                } else {
+                    GoldButton("再来一局") { onAgain() }
+                }
             }
-            Spacer(Modifier.height(12.dp))
-            OutlineGoldButton("回大厅歇歇") { onBackLobby() }
+        }
+
+        // 右上角退出按钮（固定，不随内容滚动）
+        Box(
+            Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 10.dp, end = 14.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(Color(0x665D1010))
+                .border(1.dp, Color(0x88C9A25E), RoundedCornerShape(18.dp))
+                .clickable { onBackLobby() }
+                .padding(horizontal = 16.dp, vertical = 7.dp)
+        ) {
+            Text(
+                "✕ 退出",
+                color = Color(0xFFFFE0B2),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }

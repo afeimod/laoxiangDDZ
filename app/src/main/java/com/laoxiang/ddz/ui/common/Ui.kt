@@ -34,21 +34,13 @@ fun avatarRes(avatar: Int, context: android.content.Context): Int {
     }
 }
 
-/** 圆形头像 */
+/** 圆形头像（源图已预处理为正方形，Crop 居中裁剪保证人物填满圆框不变形） */
 @Composable
 fun AvatarImage(avatar: Int, size: Dp, modifier: Modifier = Modifier) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val res = remember(avatar) { avatarRes(avatar, ctx) }
     if (res != 0) {
-        Image(
-            painter = painterResource(res),
-            contentDescription = "头像",
-            contentScale = ContentScale.Fit,
-            modifier = modifier
-                .size(size)
-                .clip(CircleShape)
-                .background(Color(0x33FFFFFF))
-        )
+        AvatarImageRes(res, size, modifier)
     } else {
         Box(
             modifier = modifier
@@ -59,6 +51,25 @@ fun AvatarImage(avatar: Int, size: Dp, modifier: Modifier = Modifier) {
         ) {
             Text("老乡", color = Ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         }
+    }
+}
+
+/** 圆形头像（直接指定 drawable 资源 id，用于默认头像/富翁地主头像等） */
+@Composable
+fun AvatarImageRes(resId: Int, size: Dp, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(Color(0xFFFFF3E0))
+            .border(1.5.dp, Color(0xFFC9A25E), CircleShape)
+    ) {
+        Image(
+            painter = painterResource(resId),
+            contentDescription = "头像",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
     }
 }
 

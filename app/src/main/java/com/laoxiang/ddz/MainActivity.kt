@@ -1,6 +1,8 @@
 package com.laoxiang.ddz
 
+import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -10,6 +12,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.laoxiang.ddz.ui.game.GameMode
 import com.laoxiang.ddz.ui.game.GameScreen
@@ -22,16 +27,39 @@ import com.laoxiang.ddz.ui.theme.LaoXiangDDZTheme
 /**
  * 老乡斗地主 主界面
  * 页面流：大厅 → （房间 | 对局） → 结算 → 返回
+ * 全屏沉浸：隐藏状态栏与导航栏，从屏幕边缘上/下滑可临时呼出
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        hideSystemBars()
+        // 刘海/挖孔屏也全屏延伸（横屏时尤其重要）
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
         setContent {
             LaoXiangDDZTheme {
                 LaoXiangRoot()
             }
         }
+    }
+
+    /** 沉浸式全屏：隐藏状态栏 + 导航栏；滑动呼出后自动再隐藏 */
+    private fun hideSystemBars() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) hideSystemBars()
     }
 }
 
