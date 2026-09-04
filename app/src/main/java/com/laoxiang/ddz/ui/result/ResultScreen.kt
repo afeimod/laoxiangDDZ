@@ -214,7 +214,7 @@ private fun ResultStat(label: String, value: String) {
     }
 }
 
-private data class ConfettiPiece(
+internal data class ConfettiPiece(
     val x: Float,
     val delayMs: Int,
     val speed: Float,

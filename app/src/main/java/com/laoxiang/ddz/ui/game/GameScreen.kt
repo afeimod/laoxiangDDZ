@@ -53,16 +53,20 @@ import kotlinx.coroutines.launch
 fun GameScreen(gameVm: GameViewModel, onExit: () -> Unit) {
     val snapshot by gameVm.snapshot.collectAsState()
     val snap = snapshot ?: run {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(Color(0xFF16305C)),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(color = LightGold)
-                Spacer(Modifier.height(10.dp))
-                Text("等房主开局…", color = Color(0xCCD7E7FA))
+        Box(Modifier.fillMaxSize()) {
+            // 等待页也用玩家自选的牌桌背景
+            TableBackground(bgKey = gameVm.prefs.tableBg, modifier = Modifier.fillMaxSize())
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF16305C).copy(alpha = 0.5f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(color = LightGold)
+                    Spacer(Modifier.height(10.dp))
+                    Text("等房主开局…", color = Color(0xCCD7E7FA))
+                }
             }
         }
         return
@@ -178,10 +182,9 @@ fun GameScreen(gameVm: GameViewModel, onExit: () -> Unit) {
                     translationX = shake.value.dp.toPx()
                 }
         ) {
-            Image(
-                painter = painterResource(R.drawable.bg_game_landscape),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
+            // 牌桌背景：预设 4 款 / 相册自定义（v12 多元化背景）
+            TableBackground(
+                bgKey = gameVm.prefs.tableBg,
                 modifier = Modifier.fillMaxSize()
             )
 
@@ -705,124 +708,6 @@ private fun ActionButtons(
             Spacer(Modifier.height(46.dp))
         }
     }
-}
-
-/**
- * 手牌行：居中紧凑（不铺满，两侧留白），高度驱动大卡 + 自适应重叠。
- * 选牌手势 = 单击选/取消 + 按住横向滑动多选（扫过的牌全部加入选中）。
- */
-@Composable
-private fun HandRow(
-    hand: List<com.laoxiang.ddz.data.Card>,
-    selected: Set<Int>,
-    onToggle: (Int) -> Unit,
-    onSweep: (List<Int>) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val config = LocalConfiguration.current
-    BoxWithConstraints(modifier.fillMaxWidth()) {
-        val n = hand.size.coerceAtLeast(1)
-        val screenH = config.screenHeightDp.dp
-        // 目标卡宽：横屏 = 30% 屏高（按卡牌比例换算）
-        val w0 = screenH * 0.30f * CARD_RATIO
-        // 紧凑居中：可用宽度先收 18%，牌少时也不会摊满整行
-        val avail = (maxWidth - 2.dp) * 0.82f
-
-        // 自适应露出比例：牌少时每张最多露出 66%，放不下时压缩到最低 22%
-        var visible = 0.66f
-        var w = minOf(w0, avail / (1f + (n - 1) * visible))
-        if (w < w0) {
-            visible = ((avail / w0 - 1f) / (n - 1).coerceAtLeast(1))
-                .coerceIn(0.22f, 0.66f)
-            w = minOf(w0, avail / (1f + (n - 1) * visible))
-        }
-        val step = w * visible                  // 相邻牌间距（露出部分）
-        val overlap = w - step
-        val total = w + step * (n - 1)
-        val startX = (maxWidth - total) / 2     // 居中起点（两侧留白）
-
-        // 手势闭包用最新几何/手牌（旋转、发牌、出牌后不失效）
-        val density = LocalDensity.current
-        val geo = rememberUpdatedState(
-            HandGeo(
-                n = hand.size,
-                startXpx = with(density) { startX.toPx() },
-                stepPx = with(density) { step.toPx() },
-                cardWpx = with(density) { w.toPx() }
-            )
-        )
-        val handState = rememberUpdatedState(hand)
-
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .pointerInput(Unit) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        var dragging = false
-                        var lastX = down.position.x
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            if (!dragging) {
-                                val moved = kotlin.math.abs(change.position.x - down.position.x) >
-                                        viewConfiguration.touchSlop ||
-                                        kotlin.math.abs(change.position.y - down.position.y) >
-                                        viewConfiguration.touchSlop
-                                if (moved) {
-                                    dragging = true
-                                    // 起点上的牌先纳入多选
-                                    idxAtX(geo.value, lastX)?.let { i ->
-                                        handState.value.getOrNull(i)?.let { c -> onSweep(listOf(c.id)) }
-                                    }
-                                }
-                            }
-                            if (dragging) {
-                                val a = minOf(lastX, change.position.x)
-                                val b = maxOf(lastX, change.position.x)
-                                val i0 = idxAtX(geo.value, a)
-                                val i1 = idxAtX(geo.value, b)
-                                if (i0 != null || i1 != null) {
-                                    val lo = minOf(i0 ?: i1!!, i1 ?: i0!!)
-                                    val hi = maxOf(i0 ?: i1!!, i1 ?: i0!!)
-                                    val ids = (lo..hi).mapNotNull { handState.value.getOrNull(it)?.id }
-                                    if (ids.isNotEmpty()) onSweep(ids)
-                                }
-                                lastX = change.position.x
-                                change.consume()    // 吃掉移动事件，避免误触发单击
-                            }
-                            if (!change.pressed) break
-                        }
-                    }
-                },
-            horizontalArrangement = Arrangement.spacedBy(-overlap, Alignment.CenterHorizontally),
-            verticalAlignment = Alignment.Bottom
-        ) {
-            hand.forEach { c ->
-                // 每张新出现的牌从上方滑入（发牌逐张触发；出牌后余牌槽位复用不重播）
-                val appear = remember { MutableTransitionState(false).apply { targetState = true } }
-                AnimatedVisibility(
-                    visibleState = appear,
-                    enter = fadeIn(tween(100)) + slideInVertically(tween(130)) { -it / 3 }
-                ) {
-                    PokerCard(c, w, raised = c.id in selected, onClick = { onToggle(c.id) })
-                }
-            }
-        }
-    }
-}
-
-/** 手牌几何快照（像素），供滑动手势把 x 坐标映射到牌序号 */
-private data class HandGeo(val n: Int, val startXpx: Float, val stepPx: Float, val cardWpx: Float)
-
-/** x 坐标 → 牌序号；落在牌堆两侧留白区时返回 null（不误选） */
-private fun idxAtX(g: HandGeo, x: Float): Int? {
-    if (g.n <= 0 || g.stepPx <= 0f) return null
-    val rel = x - g.startXpx
-    val end = (g.n - 1) * g.stepPx + g.cardWpx
-    if (rel < -0.25f * g.cardWpx || rel > end + 0.25f * g.cardWpx) return null
-    if (rel <= 0f) return 0
-    return (rel / g.stepPx).toInt().coerceIn(0, g.n - 1)
 }
 
 // ================================================================= 工具

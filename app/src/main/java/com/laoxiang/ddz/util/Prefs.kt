@@ -21,6 +21,11 @@ class Prefs(context: Context) {
         get() = sp.getString("table_style", "square") ?: "square"
         set(v) = sp.edit().putString("table_style", v).apply()
 
+    /** 牌桌背景：default（经典深蓝）/ green / red / purple / custom（相册图） */
+    var tableBg: String
+        get() = sp.getString("table_bg", "default") ?: "default"
+        set(v) = sp.edit().putString("table_bg", v).apply()
+
     /** 默认 AI 难度：0/1/2 */
     var aiLevel: Int
         get() = sp.getInt("ai_level", 1)

@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.laoxiang.ddz.LaoXiangApp
+import com.laoxiang.ddz.audio.VoiceMap
 import com.laoxiang.ddz.data.*
 import com.laoxiang.ddz.net.*
 import com.laoxiang.ddz.util.Prefs
@@ -93,16 +94,23 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun emit(f: Fx) {
         fx.tryEmit(f)
-        // 同步音效
+        // 同步音效/语音
         when (f) {
             is Fx.Shuffle -> sound.play("shuffle")
-            is Fx.BidCall -> sound.play("jiaofen")
-            is Fx.BidPass -> sound.play("buqiang")
-            is Fx.Rob -> sound.play("qiang")
-            is Fx.RobPass -> sound.play("buqiang")
-            is Fx.Played -> sound.play("play")
+            // 叫抢喊话语音：叫地主/不叫/抢地主/不抢
+            is Fx.BidCall -> sound.play("voice_jiao")
+            is Fx.BidPass -> sound.play("voice_bujiao")
+            is Fx.Rob -> sound.play("voice_qiangd")
+            is Fx.RobPass -> sound.play("voice_buqiangd")
+            is Fx.Played -> {
+                // 出牌牌型播报（单牌三/对四/三带一/顺子/炸弹…），再垫一声轻出牌音
+                // 注意：三种模式下 snapshot 都先于 effects 更新，lastMove 即刚出的这手牌
+                val voice = VoiceMap.forMove(snapshot.value?.lastMove)
+                if (voice != null) sound.play(voice, 0.95f)
+                sound.play("play", 0.35f)
+            }
             is Fx.Pass -> sound.play("pass")
-            // 王炸（双王）才用王炸音效；普通炸弹用专用爆炸音效
+            // 王炸（双王）才用王炸音效；普通炸弹用专用爆炸音效（语音“炸弹/王炸”已随 Played 播报）
             is Fx.Bomb -> sound.play(if (f.rocket) "wangzha" else "bomb")
             is Fx.Plane -> sound.play("plane")
             is Fx.GameOver -> sound.play(
@@ -218,7 +226,7 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
                 // AI 偶尔催促/嘲讽
                 if (engine.phase == Phase.PLAYING && engine.currentTurn == 0 && Random.nextFloat() < 0.12f) {
                     pushChat(1, "快点吧，我等到花儿都谢了")
-                    sound.play("kuaidian", 0.8f)
+                    sound.play("voice_chat1", 0.9f)
                 }
                 pumpSingleAi()
             }
@@ -245,7 +253,11 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
             handleResultForScore()
         }.launchIn(viewModelScope)
         h.chatFlow.onEach { chat ->
-            chat?.let { (seat, text, _) -> pushChat(seat, text) }
+            chat?.let { (seat, text, code) ->
+                pushChat(seat, text)
+                // 联机喊话语音：广播自带的 sound 码（含自己发的，回流统一播报）
+                VoiceMap.forChat(code)?.let { sound.play(it, 0.95f) }
+            }
         }.launchIn(viewModelScope)
         h.noticeFlow.onEach { notice.value = it }.launchIn(viewModelScope)
         h.setAiLevel(prefs.aiLevel)
@@ -321,7 +333,11 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
             }
         }.launchIn(viewModelScope)
         c.chatFlow.onEach { chat ->
-            chat?.let { (seat, text, _) -> pushChat(seat, text) }
+            chat?.let { (seat, text, code) ->
+                pushChat(seat, text)
+                // 联机喊话语音：服务端会回发自己发的消息，统一在此播报
+                VoiceMap.forChat(code)?.let { sound.play(it, 0.95f) }
+            }
         }.launchIn(viewModelScope)
         c.kicked.onEach {
             if (it) {
@@ -468,18 +484,20 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
         return null
     }
 
-    /** 快捷聊天 */
+    /** 快捷聊天：命中 CHAT_PHRASES 时携带语音码（1..8），本地/联机都能播报语音 */
     fun sendChat(text: String) {
+        val code = CHAT_PHRASES.indexOf(text) + 1      // 1..8 命中，0=自定义文本
         when (mode.value) {
             GameMode.SINGLE -> {
                 pushChat(0, text)
-                if (text.contains("快点")) sound.play("kuaidian", 0.8f)
+                if (code > 0) sound.play("voice_chat$code", 0.95f)
+                else if (text.contains("快点")) sound.play("kuaidian", 0.8f)
             }
             GameMode.HOST -> {
-                host?.hostChat(text, if (text.contains("快点")) 1 else 0)
-                pushChat(0, text)
+                // 气泡与语音由 chatFlow 回流统一处理，避免重复
+                host?.hostChat(text, code)
             }
-            GameMode.CLIENT -> client?.chat(text, if (text.contains("快点")) 1 else 0)
+            GameMode.CLIENT -> client?.chat(text, code)
         }
     }
 

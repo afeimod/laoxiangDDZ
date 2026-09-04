@@ -1,15 +1,24 @@
 package com.laoxiang.ddz.ui.lobby
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,8 +27,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -27,18 +38,24 @@ import androidx.compose.ui.unit.sp
 import com.laoxiang.ddz.R
 import com.laoxiang.ddz.ui.common.AvatarImage
 import com.laoxiang.ddz.ui.game.GameViewModel
+import com.laoxiang.ddz.ui.game.TableBg
 import com.laoxiang.ddz.ui.theme.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
- * 大厅主页（对标欢乐斗地主）：浅蓝天空场景，App 已锁定横屏，单套布局不滚动。
- * 顶栏（胶囊+品牌+设置）→ 左大卡片（难度+开局）+ 右联机入口竖排
+ * 大厅主页（v13 重设计）：浅蓝天空场景，横屏单套布局。
+ * 顶栏（玩家胶囊+品牌+设置）→ 三大方格：快速开始 / 本地联机 / 棋牌合集；
+ * 电脑难度在设置弹层中调整。
  */
 @Composable
 fun LobbyScreen(
     gameVm: GameViewModel,
     onSingle: (Int) -> Unit,
     onHost: () -> Unit,
-    onJoin: () -> Unit
+    onJoin: () -> Unit,
+    onCollection: () -> Unit
 ) {
     val prefs = gameVm.prefs
     var nickname by remember { mutableStateOf(prefs.nickname) }
@@ -48,8 +65,26 @@ fun LobbyScreen(
     var showAvatarPicker by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showNicknameEditor by remember { mutableStateOf(false) }
+    var showNetChooser by remember { mutableStateOf(false) }
     var nicknameDraft by remember { mutableStateOf("") }
     var aiLevel by remember { mutableStateOf(prefs.aiLevel) }
+    // 牌桌背景选择（v12：预设 4 款 + 相册自定义）
+    var tableBg by remember { mutableStateOf(prefs.tableBg) }
+    var customBgStamp by remember { mutableStateOf(0L) }   // 自定义图刷新锚点
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val pickBgImage = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) scope.launch {
+            val ok = withContext(Dispatchers.IO) { saveCustomBg(context, uri) }
+            if (ok) {
+                tableBg = "custom"
+                prefs.tableBg = "custom"
+                customBgStamp = System.currentTimeMillis()
+            }
+        }
+    }
 
     Box(
         Modifier
@@ -106,81 +141,108 @@ fun LobbyScreen(
                                 )
                             )
                         )
-                        Text("经典单机 · 局域网联机", fontSize = 9.sp, color = Color(0xCCE8F2FF))
+                        Text("棋牌合集 · 局域网联机", fontSize = 9.sp, color = Color(0xCCE8F2FF))
                     }
                     Spacer(Modifier.weight(1f))
                     SettingsGear { showSettings = true }
                 }
 
-                Spacer(Modifier.weight(0.5f))
+                Spacer(Modifier.weight(0.55f))
 
+                // ---- 三大方格：快速开始 / 本地联机 / 棋牌合集
+                val config = LocalConfiguration.current
+                val cellH = (config.screenHeightDp.dp * 0.42f).coerceIn(190.dp, 280.dp)
+                val levelLabel = listOf("简单", "中等", "困难")[aiLevel.coerceIn(0, 2)]
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 24.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        .padding(horizontal = 22.dp),
+                    horizontalArrangement = Arrangement.spacedBy(13.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // 左：大卡片开局区
-                    Column(
-                        Modifier
-                            .weight(0.64f)
-                            .shadow(12.dp, RoundedCornerShape(22.dp))
-                            .clip(RoundedCornerShape(22.dp))
-                            .background(Color(0xF7FFFFFF))
-                            .border(2.dp, Color(0xFFCFE4FB), RoundedCornerShape(22.dp))
-                            .padding(horizontal = 16.dp, vertical = 14.dp)
+                    // ① 快速开始（斗地主）
+                    HomeCell(
+                        modifier = Modifier.weight(1f),
+                        height = cellH,
+                        background = Brush.verticalGradient(
+                            listOf(Color(0xFFFFC94D), Color(0xFFF0821E))
+                        ),
+                        borderColor = Color(0x66FFFFFF),
+                        title = "快速开始",
+                        titleColor = Color.White,
+                        subtitle = "斗地主 · 电脑$levelLabel",
+                        subColor = Color(0xCFFFFFF3E0),
+                        badge = "一键开局",
+                        onClick = { onSingle(aiLevel) }
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    "经典斗地主",
-                                    fontSize = 20.sp, fontWeight = FontWeight.Black,
-                                    color = Color(0xFF123A6E)
-                                )
-                                Text(
-                                    "三人一副牌 · 智能电脑对手",
-                                    fontSize = 10.sp, color = Color(0xFF6B83A3)
-                                )
-                            }
-                            Image(
-                                painter = painterResource(R.drawable.fan_cards),
-                                contentDescription = "扑克装饰",
-                                contentScale = ContentScale.Fit,
-                                modifier = Modifier.height(56.dp)
+                        Image(
+                            painter = painterResource(R.drawable.fan_cards),
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.height(cellH * 0.42f)
+                        )
+                    }
+
+                    // ② 本地联机
+                    HomeCell(
+                        modifier = Modifier.weight(1f),
+                        height = cellH,
+                        background = Brush.verticalGradient(
+                            listOf(Color(0xF7FFFFFF), Color(0xFFE8F2FF))
+                        ),
+                        borderColor = Color(0xFFBFD9F5),
+                        title = "本地联机",
+                        titleColor = Color(0xFF14427E),
+                        subtitle = "开一桌 · 加入牌局",
+                        subColor = Color(0xFF6B83A3),
+                        badge = "面对面",
+                        onClick = { showNetChooser = true }
+                    ) {
+                        Box(
+                            Modifier
+                                .size(cellH * 0.34f)
+                                .clip(CircleShape)
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(Color(0xFF5B8BE8), Color(0xFF3A63C0))
+                                    )
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "⇆",
+                                fontSize = (cellH.value * 0.14f).sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color.White
                             )
                         }
-                        Spacer(Modifier.height(10.dp))
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            listOf("简单", "中等", "困难").forEachIndexed { lv, label ->
-                                DifficultyPill(
-                                    label = label,
-                                    selected = aiLevel == lv,
-                                    modifier = Modifier.weight(1f),
-                                    compact = true
-                                ) {
-                                    aiLevel = lv
-                                    prefs.aiLevel = lv
-                                }
-                            }
-                        }
-                        Spacer(Modifier.height(12.dp))
-                        BigStartButton("开 始 对 战", height = 54.dp) { onSingle(aiLevel) }
                     }
-                    // 右：联机入口竖排
-                    Column(
-                        Modifier.weight(0.36f),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+
+                    // ③ 棋牌合集
+                    HomeCell(
+                        modifier = Modifier.weight(1f),
+                        height = cellH,
+                        background = Brush.verticalGradient(
+                            listOf(Color(0xFFF7FFFFFF), Color(0xFFFFF1DC))
+                        ),
+                        borderColor = Color(0xFFC9A25E),
+                        title = "棋牌合集",
+                        titleColor = Color(0xFF8E1414),
+                        subtitle = "跑得快 · 持续上新",
+                        subColor = Color(0xFF9A7B52),
+                        badge = "NEW",
+                        onClick = onCollection
                     ) {
-                        LanEntry("开一桌 · 当房主", Modifier.fillMaxWidth(), height = 58.dp) { onHost() }
-                        LanEntry("串门 · 加入牌局", Modifier.fillMaxWidth(), height = 58.dp) { onJoin() }
+                        Image(
+                            painter = painterResource(R.drawable.pdk_icon),
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.height(cellH * 0.42f)
+                        )
                     }
                 }
 
-                Spacer(Modifier.weight(0.5f))
+                Spacer(Modifier.weight(0.55f))
             }
 
         // ---------- 昵称修改弹层
@@ -268,7 +330,46 @@ fun LobbyScreen(
             )
         }
 
-        // ---------- 设置弹层（声音）
+        // ---------- 本地联机选择弹层（开一桌 / 加入牌局）
+        if (showNetChooser) {
+            AlertDialog(
+                onDismissRequest = { showNetChooser = false },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { showNetChooser = false }) {
+                        Text("算了", color = Color(0xFF8A6A45))
+                    }
+                },
+                title = { Text("本地联机", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        LanEntry(
+                            "开一桌 · 当房主（同一 WiFi）",
+                            Modifier.fillMaxWidth(),
+                            height = 52.dp
+                        ) {
+                            showNetChooser = false
+                            onHost()
+                        }
+                        LanEntry(
+                            "串门 · 加入附近的牌局",
+                            Modifier.fillMaxWidth(),
+                            height = 52.dp
+                        ) {
+                            showNetChooser = false
+                            onJoin()
+                        }
+                        Text(
+                            "两台手机连同一个 WiFi / 热点就能开打",
+                            fontSize = 10.sp,
+                            color = Color(0x994A6285)
+                        )
+                    }
+                }
+            )
+        }
+
+        // ---------- 设置弹层（难度 + 声音 + 牌桌背景）
         if (showSettings) {
             AlertDialog(
                 onDismissRequest = { showSettings = false },
@@ -279,7 +380,40 @@ fun LobbyScreen(
                 },
                 title = { Text("设置", fontWeight = FontWeight.Bold) },
                 text = {
-                    Column {
+                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                        // 电脑难度（v13 从主页移入设置）
+                        Text("电脑难度", fontWeight = FontWeight.Bold, color = Color(0xFF123A6E))
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf("简单", "中等", "困难").forEachIndexed { lv, label ->
+                                DifficultyPill(
+                                    label = label,
+                                    selected = aiLevel == lv,
+                                    modifier = Modifier.weight(1f),
+                                    compact = true
+                                ) {
+                                    aiLevel = lv
+                                    prefs.aiLevel = lv
+                                }
+                            }
+                        }
+                        Text(
+                            "影响斗地主与跑得快的电脑水平",
+                            fontSize = 9.sp,
+                            color = Color(0x994A6285),
+                            modifier = Modifier.padding(top = 3.dp)
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(Color(0x14000000))
+                        )
+                        Spacer(Modifier.height(10.dp))
                         Row(
                             Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -314,6 +448,120 @@ fun LobbyScreen(
                                 )
                             )
                         }
+                        Spacer(Modifier.height(10.dp))
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(Color(0x14000000))
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Text("牌桌背景", fontWeight = FontWeight.Bold, color = Color(0xFF123A6E))
+                        Text(
+                            "左右滑动查看更多 →",
+                            fontSize = 9.sp,
+                            color = Color(0x994A6285)
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        // 可左右滑动的背景选择条（v13：解决弹层内显示不完整）
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(7.dp),
+                            verticalAlignment = Alignment.Top,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            itemsIndexed(TableBg.PRESETS) { _, (key, label) ->
+                                val sel = tableBg == key
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.clickable {
+                                        tableBg = key
+                                        prefs.tableBg = key
+                                    }
+                                ) {
+                                    Box(
+                                        Modifier
+                                            .width(58.dp)
+                                            .height(34.dp)
+                                            .clip(RoundedCornerShape(7.dp))
+                                            .border(
+                                                if (sel) 2.dp else 1.dp,
+                                                if (sel) Gold else Color(0xFFCBDEF2),
+                                                RoundedCornerShape(7.dp)
+                                            )
+                                    ) {
+                                        Image(
+                                            painter = painterResource(TableBg.resFor(key)),
+                                            contentDescription = label,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    }
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        label,
+                                        fontSize = 8.sp,
+                                        maxLines = 1,
+                                        color = if (sel) DeepRed else Color(0xFF8A6A45),
+                                        fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
+                            }
+                            // 自定义图片块（相册选图，压缩后持久化）
+                            item {
+                                val selCustom = tableBg == "custom"
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.clickable { pickBgImage.launch("image/*") }
+                                ) {
+                                    Box(
+                                        Modifier
+                                            .width(58.dp)
+                                            .height(34.dp)
+                                            .clip(RoundedCornerShape(7.dp))
+                                            .background(Color(0xFFF1F6FC))
+                                            .border(
+                                                if (selCustom) 2.dp else 1.dp,
+                                                if (selCustom) Gold else Color(0xFFCBDEF2),
+                                                RoundedCornerShape(7.dp)
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        val thumb = remember(customBgStamp) {
+                                            loadBgThumb(TableBg.customFile(context))
+                                        }
+                                        if (thumb != null) {
+                                            Image(
+                                                bitmap = thumb.asImageBitmap(),
+                                                contentDescription = "自定义背景",
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        } else {
+                                            Text(
+                                                "＋图",
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF4A6285)
+                                            )
+                                        }
+                                    }
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        "自定义",
+                                        fontSize = 8.sp,
+                                        maxLines = 1,
+                                        color = if (selCustom) DeepRed else Color(0xFF8A6A45),
+                                        fontWeight = if (selCustom) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "点「自定义」从相册选图当牌桌；重新选择可更换",
+                            fontSize = 9.sp,
+                            color = Color(0x994A6285)
+                        )
                     }
                 }
             )
@@ -440,52 +688,58 @@ private fun DifficultyPill(
     }
 }
 
-/** 超大开局按钮（金橙渐变 + 白描边 + 立体阴影） */
+/** 主页大方格入口（图标 + 标题 + 副标题 + 角标，v13 重设计） */
 @Composable
-private fun BigStartButton(
-    text: String,
-    height: androidx.compose.ui.unit.Dp = 64.dp,
-    onClick: () -> Unit
+private fun HomeCell(
+    modifier: Modifier = Modifier,
+    height: androidx.compose.ui.unit.Dp,
+    background: Brush,
+    borderColor: Color,
+    title: String,
+    titleColor: Color,
+    subtitle: String,
+    subColor: Color,
+    badge: String,
+    onClick: () -> Unit,
+    icon: @Composable () -> Unit
 ) {
-    val shape = RoundedCornerShape(32.dp)
-    Box(
-        Modifier
-            .fillMaxWidth()
+    val shape = RoundedCornerShape(20.dp)
+    Column(
+        modifier
             .height(height)
-            .shadow(8.dp, shape)
+            .shadow(9.dp, shape)
             .clip(shape)
-            .background(
-                Brush.verticalGradient(
-                    listOf(Color(0xFFFFC24D), Color(0xFFF5921E), Color(0xFFE87B12))
-                )
-            )
-            .border(2.dp, Color(0xB3FFFFFF), shape)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
+            .background(background)
+            .border(2.dp, borderColor, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
+        icon()
+        Spacer(Modifier.height(8.dp))
+        Text(
+            title,
+            fontSize = 19.sp,
+            fontWeight = FontWeight.Black,
+            color = titleColor
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(subtitle, fontSize = 10.sp, color = subColor, maxLines = 1)
+        Spacer(Modifier.height(6.dp))
         Box(
             Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 4.dp)
-                .width(76.dp)
-                .height(5.dp)
-                .clip(RoundedCornerShape(3.dp))
-                .background(Color(0x59FFFFFF))
-        )
-        Text(
-            text,
-            fontSize = if (height < 60.dp) 19.sp else 22.sp,
-            fontWeight = FontWeight.Black,
-            color = Color.White,
-            letterSpacing = 4.sp,
-            style = androidx.compose.ui.text.TextStyle(
-                shadow = androidx.compose.ui.graphics.Shadow(
-                    color = Color(0x669C4A00),
-                    offset = androidx.compose.ui.geometry.Offset(1f, 2f),
-                    blurRadius = 3f
-                )
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0x1A000000))
+                .padding(horizontal = 8.dp, vertical = 2.dp)
+        ) {
+            Text(
+                badge,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                color = titleColor.copy(alpha = 0.92f)
             )
-        )
+        }
     }
 }
 
@@ -515,4 +769,60 @@ private fun LanEntry(
             color = Color(0xFF14427E)
         )
     }
+}
+
+// ================================================================= 牌桌背景自定义
+
+/** 相册选图 → 降采样到最长边 ≈1920 → JPEG 存 filesDir/table_bg_custom.jpg */
+private fun saveCustomBg(ctx: android.content.Context, uri: Uri): Boolean = try {
+    val resolver = ctx.contentResolver
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    resolver.openInputStream(uri)?.use {
+        BitmapFactory.decodeStream(it, null, bounds)
+    }
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) false else {
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= 1920) sample *= 2
+        val bmp = resolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(
+                it, null,
+                BitmapFactory.Options().apply { inSampleSize = sample }
+            )
+        }
+        if (bmp == null) false else {
+            val scale = 1920f / maxOf(bmp.width, bmp.height)
+            val out = if (scale < 1f) {
+                Bitmap.createScaledBitmap(
+                    bmp,
+                    (bmp.width * scale).toInt().coerceAtLeast(1),
+                    (bmp.height * scale).toInt().coerceAtLeast(1),
+                    true
+                )
+            } else bmp
+            TableBg.customFile(ctx).outputStream().use { fos ->
+                out.compress(Bitmap.CompressFormat.JPEG, 88, fos)
+            }
+            if (out !== bmp) out.recycle()
+            bmp.recycle()
+            true
+        }
+    }
+} catch (_: Throwable) {
+    false
+}
+
+/** 小缩略图（设置弹层预览用） */
+private fun loadBgThumb(f: java.io.File, max: Int = 240): Bitmap? = try {
+    if (!f.exists()) null else {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(f.absolutePath, bounds)
+        var s = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (s * 2) >= max) s *= 2
+        BitmapFactory.decodeFile(
+            f.absolutePath,
+            BitmapFactory.Options().apply { inSampleSize = s }
+        )
+    }
+} catch (_: Throwable) {
+    null
 }

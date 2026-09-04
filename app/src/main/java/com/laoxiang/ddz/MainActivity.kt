@@ -16,17 +16,22 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.laoxiang.ddz.data.PdkMode
+import com.laoxiang.ddz.ui.collection.CollectionScreen
 import com.laoxiang.ddz.ui.game.GameMode
 import com.laoxiang.ddz.ui.game.GameScreen
 import com.laoxiang.ddz.ui.game.GameViewModel
+import com.laoxiang.ddz.ui.game.PdkGameScreen
+import com.laoxiang.ddz.ui.game.PdkViewModel
 import com.laoxiang.ddz.ui.lobby.LobbyScreen
+import com.laoxiang.ddz.ui.result.PdkResultScreen
 import com.laoxiang.ddz.ui.result.ResultScreen
 import com.laoxiang.ddz.ui.room.RoomScreen
 import com.laoxiang.ddz.ui.theme.LaoXiangDDZTheme
 
 /**
  * 老乡斗地主 主界面
- * 页面流：大厅 → （房间 | 对局） → 结算 → 返回
+ * 页面流：大厅 →（房间 | 斗地主对局 | 棋牌合集 → 跑得快对局）→ 结算 → 返回
  * 全屏沉浸：隐藏状态栏与导航栏，从屏幕边缘上/下滑可临时呼出
  */
 class MainActivity : ComponentActivity() {
@@ -64,16 +69,45 @@ class MainActivity : ComponentActivity() {
 }
 
 /** 简单路由（与 Application 类 LaoXiangApp 同名会冲突，故叫 Root） */
-private enum class Page { LOBBY, ROOM, GAME }
+private enum class Page { LOBBY, ROOM, GAME, COLLECTION, PDK }
 
 @Composable
 fun LaoXiangRoot() {
     val gameVm: GameViewModel = viewModel()
+    val pdkVm: PdkViewModel = viewModel()
     var page by remember { mutableStateOf(Page.LOBBY) }
     val snapshot by gameVm.snapshot.collectAsState()
     val showResult = snapshot?.result != null
+    val pdkSnapshot by pdkVm.snapshot.collectAsState()
+    val showPdkResult = pdkSnapshot?.result != null
 
     when {
+        page == Page.PDK && showPdkResult -> PdkResultScreen(
+            pdkVm = pdkVm,
+            onBackLobby = {
+                pdkVm.exitGame()
+                page = Page.LOBBY
+            },
+            onAgain = { pdkVm.start(pdkSnapshot!!.mode) }
+        )
+        page == Page.PDK -> PdkGameScreen(
+            pdkVm = pdkVm,
+            onExit = {
+                pdkVm.exitGame()
+                page = Page.LOBBY
+            }
+        )
+        page == Page.COLLECTION -> CollectionScreen(
+            onBack = { page = Page.LOBBY },
+            onPlayDdz = {
+                gameVm.startSingle(gameVm.prefs.aiLevel)
+                page = Page.GAME
+            },
+            onPlayPdk = { mode ->
+                pdkVm.start(mode)
+                page = Page.PDK
+            }
+        )
         page == Page.GAME && showResult -> ResultScreen(
             gameVm = gameVm,
             onBackLobby = {
@@ -113,7 +147,8 @@ fun LaoXiangRoot() {
                 gameVm.startHost()
                 page = Page.ROOM
             },
-            onJoin = { page = Page.ROOM }
+            onJoin = { page = Page.ROOM },
+            onCollection = { page = Page.COLLECTION }
         )
     }
 }

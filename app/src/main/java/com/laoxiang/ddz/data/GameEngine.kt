@@ -6,9 +6,10 @@ import kotlin.random.Random
  * 斗地主游戏引擎（权威逻辑，纯 Kotlin，无 Android 依赖）
  * 单机模式本地驱动；局域网房主模式在同一引擎上运行并广播状态快照。
  *
- * 叫抢规则：随机首叫 → 依次「叫地主/不叫」，首个叫者为候选（其余人跳过叫牌）；
- *           从候选下家起其余两家各一次「抢地主/不抢」，每抢一次倍数×2；
- *           最终候选当地主并收底牌。无人叫 → 流局自动重发。
+ * 叫抢规则（欢乐斗地主正统流程）：随机首叫 → 依次「叫地主/不叫」，首个叫者为候选；
+ *           从候选下家起按顺序问「抢地主/不抢」，但**凡说过「不叫」的玩家不能再抢**（v13 修正）；
+ *           每抢一次倍数×2；最后抢者当地主，无人抢则叫者当地主并收底牌。
+ *           无人叫 → 流局自动重发。
  * 计分规则：底分 100 × 倍数（抢地主 / 炸弹王炸 / 春天各×2）。
  *           地主赢：地主 +2倍，两家农民各 -1倍；地主输反之。
  */
@@ -90,6 +91,9 @@ class GameEngine(private val randomSeed: Long? = null) {
     private var bidCandidate = -1
     private var bidCursor = -1
     private var bidAsked = 0
+
+    /** 叫牌阶段说过「不叫」的座位（欢乐规则：不叫者不能再抢，v13） */
+    private val bidPassedSeats = mutableSetOf<Int>()
 
     private val robQueue = ArrayDeque<Int>()
     private var robCount = 0
@@ -185,6 +189,7 @@ class GameEngine(private val randomSeed: Long? = null) {
         multiplier = 1
         robCount = 0
         bidCandidate = -1
+        bidPassedSeats.clear()
         bottomRevealed = false
         result = null
         events.clear()
@@ -236,16 +241,25 @@ class GameEngine(private val randomSeed: Long? = null) {
         if (call) {
             bidCandidate = s
             events += GameEvent.BidCall(s)
-            // 其余两家依次抢一次
+            // 抢地主顺序 = 候选下家起依次；但说过「不叫」的玩家不能再抢（欢乐正统规则）
             robQueue.clear()
-            robQueue += nextSeat(s)
-            robQueue += nextSeat(nextSeat(s))
-            phase = Phase.ROBBING
-            events += GameEvent.TurnTo(robQueue.first(), phase)
+            var cursor = nextSeat(s)
+            repeat(players.size - 1) {
+                if (cursor !in bidPassedSeats) robQueue += cursor
+                cursor = nextSeat(cursor)
+            }
+            if (robQueue.isEmpty()) {
+                // 无人有资格抢 → 直接定地主
+                finishBidding()
+            } else {
+                phase = Phase.ROBBING
+                events += GameEvent.TurnTo(robQueue.first(), phase)
+            }
         } else {
             events += GameEvent.BidPass(s)
+            bidPassedSeats += s
             bidAsked++
-            if (bidAsked >= 3) {
+            if (bidAsked >= players.size) {
                 redeal()
                 return true
             }

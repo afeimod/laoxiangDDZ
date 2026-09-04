@@ -3,11 +3,13 @@ package com.laoxiang.ddz.data
 import kotlin.random.Random
 
 /**
- * 斗地主 AI（三档难度）
+ * 斗地主 AI（三档难度，v13 大幅强化）
  *
  * EASY   —— 随机散漫：叫牌随缘、出牌乱走、常放过
- * MEDIUM —— 稳健贪小：最小代价压牌、不拆炸弹、配合队友粗略
- * HARD   —— 老谋深算：记牌算牌、压上家防下家、保炸弹时机、残局精确制导
+ * MEDIUM —— 稳健实用：最小代价压牌且不拆结构、农民会让牌/顶牌、炸弹看时机
+ * HARD   —— 老谋深算：记牌算牌、顶地主喂队友、防下家、炸弹精准压制、残局两手清
+ *
+ * 叫抢评估：王/2/炸弹/三张结构/手数加权，叫牌看"强度+手数"，抢牌需"王炸或双炸级"强牌。
  */
 data class AiContext(
     val seat: Int,
@@ -28,39 +30,66 @@ class AiPlayer(
 ) {
     private val rng = seed?.let { Random(it) } ?: Random.Default
 
-    // ------------------------------------------------ 叫抢决策
+    // ================================================================ 叫抢决策
 
     /** 是否叫地主 */
     fun shouldCall(ctx: AiContext): Boolean {
-        val strength = GameEngine.handStrength(ctx.hand)
+        val p = handPower(ctx.hand)
         return when (level) {
-            AiLevel.EASY -> strength >= 10 && rng.nextFloat() < 0.5f
-            AiLevel.MEDIUM -> strength >= 12
-            AiLevel.HARD -> strength >= 14 || (strength >= 10 && rng.nextFloat() < 0.4f)
+            AiLevel.EASY -> p >= 14 && rng.nextFloat() < 0.55f
+            AiLevel.MEDIUM -> p >= 18 || (p >= 14 && rng.nextFloat() < 0.35f)
+            AiLevel.HARD -> p >= 20 || (p >= 15 && rng.nextFloat() < 0.5f)
         }
     }
 
-    /** 是否抢地主 */
+    /** 是否抢地主（要求比叫牌更强：王炸 / 多炸弹 / 强牌+少手数） */
     fun shouldRob(ctx: AiContext): Boolean {
-        val strength = GameEngine.handStrength(ctx.hand)
+        val p = handPower(ctx.hand)
+        val bombN = bombCount(ctx.hand)
         return when (level) {
-            AiLevel.EASY -> strength >= 14 && rng.nextFloat() < 0.4f
-            AiLevel.MEDIUM -> strength >= 16
-            AiLevel.HARD -> strength >= 18 || (strength >= 14 && hasBombOrRocket(ctx.hand))
+            AiLevel.EASY -> p >= 20 && rng.nextFloat() < 0.45f
+            AiLevel.MEDIUM -> p >= 24 || (p >= 20 && bombN >= 1)
+            AiLevel.HARD -> p >= 26 || (p >= 21 && bombN >= 1) ||
+                    (p >= 18 && hasRocket(ctx.hand))
         }
     }
 
-    private fun hasBombOrRocket(hand: List<Card>): Boolean {
+    /**
+     * 手牌强度（0..~40）：叫抢与流局兜底共用。
+     * 双王/单王、2、A、炸弹、三张与少手数加权。
+     */
+    fun handPower(hand: List<Card>): Int {
         val counts = hand.groupBy { it.rank }.mapValues { it.value.size }
-        if (counts.values.any { it == 4 }) return true
-        return hand.any { it.rank == 16 } && hand.any { it.rank == 17 }
+        var p = 0
+        val sj = counts[16] ?: 0
+        val bj = counts[17] ?: 0
+        if (sj > 0) p += 4
+        if (bj > 0) p += 5
+        if (sj > 0 && bj > 0) p += 4                     // 王炸额外
+        counts.forEach { (r, c) ->
+            when {
+                c == 4 -> p += 7                          // 炸弹
+                c == 3 -> p += if (r >= 13) 3 else 2      // 三张
+            }
+            if (r == 15) p += 3 * c                       // 2
+            if (r == 14) p += c                           // A
+        }
+        // 手数惩罚：手数越少越强（最低分解）
+        val hands = HandDecompose.decompose(hand).size
+        p += (6 - hands).coerceAtLeast(-4) * 2
+        return p
     }
 
-    // ------------------------------------------------ 出牌决策
+    private fun bombCount(hand: List<Card>): Int =
+        hand.groupBy { it.rank }.count { it.value.size == 4 }
+
+    private fun hasRocket(hand: List<Card>): Boolean =
+        hand.any { it.rank == 16 } && hand.any { it.rank == 17 }
+
+    // ================================================================ 出牌决策
 
     /**
      * 选择出牌；返回 null 表示过牌（要不起 / 战略放弃）。
-     * [ctx.landlord] 为地主座位。
      */
     fun chooseMove(ctx: AiContext): List<Card>? {
         val hand = ctx.hand
@@ -86,20 +115,15 @@ class AiPlayer(
     private fun easyMove(ctx: AiContext): List<Card>? {
         val hand = ctx.hand
         if (ctx.lastMove == null) {
-            // 领出：随机挑个非炸弹组合
-            val leads = MoveGen.genLeads(hand).filter {
-                it.type != MoveType.BOMB && it.type != MoveType.ROCKET
-            }
+            val leads = MoveGen.genLeads(hand).filter { !it.type.isBombLike }
             if (leads.isEmpty()) return hand.take(1)
             return leads[rng.nextInt(leads.size)].cards
         }
         val beats = MoveGen.genBeats(hand, ctx.lastMove)
         if (beats.isEmpty()) return null
-        // 一半概率放过；否则在前三便宜选项里随机
         if (rng.nextFloat() < 0.45f) return null
-        val top = beats.take(3).filter {
-            it.type != MoveType.BOMB && it.type != MoveType.ROCKET
-        }.ifEmpty { return if (rng.nextFloat() < 0.2f) beats.first().cards else null }
+        val top = beats.take(3).filter { !it.type.isBombLike }
+            .ifEmpty { return if (rng.nextFloat() < 0.2f) beats.first().cards else null }
         return top[rng.nextInt(top.size)].cards
     }
 
@@ -107,60 +131,63 @@ class AiPlayer(
 
     private fun mediumMove(ctx: AiContext): List<Card>? {
         val hand = ctx.hand
-        if (ctx.lastMove == null) {
-            return mediumLead(ctx)
-        }
+        if (ctx.lastMove == null) return mediumLead(ctx)
+
         val beats = MoveGen.genBeats(hand, ctx.lastMove)
         if (beats.isEmpty()) return null
+        val last = ctx.lastMove!!
+        val lastByLandlord = ctx.lastMoveSeat == ctx.landlord
+        val lastByTeammate = isTeammate(ctx.lastMoveSeat, ctx)
 
-        val cheap = beats.firstOrNull {
-            it.type != MoveType.BOMB && it.type != MoveType.ROCKET
-        }
-        // 残局：剩牌少就用力压
-        if (hand.size <= 4) {
-            return beats.first().cards
-        }
-        // 队友优势牌不压
-        if (isTeammate(ctx.lastMoveSeat, ctx) && ctx.lastMove!!.mainRank >= 13) {
-            return null
-        }
-        // 压牌需要动 2/王 且是队友的小牌 → 过
-        if (cheap != null && cheap.mainRank >= 15 && ctx.lastMove!!.mainRank <= 8 &&
-            isTeammate(ctx.lastMoveSeat, ctx)
-        ) {
-            return null
-        }
-        // 只剩炸弹能压：中期舍不得，后期（剩牌≤8或对手剩牌≤5）才放
-        if (cheap == null) {
+        // 只剩炸弹能压：中期忍，残局/对手告急才炸
+        val nonBomb = beats.filter { !it.type.isBombLike }
+        if (nonBomb.isEmpty()) {
             val bomb = beats.first()
-            val opponentLow = opponentMinHand(ctx) <= 5
-            if (hand.size <= 8 || opponentLow) return bomb.cards
-            return null
+            val press = lastByLandlord && (ctx.handCounts[ctx.landlord] ?: 20) <= 5
+            return if (hand.size <= 8 || press) bomb.cards else null
         }
-        return cheap.cards
+
+        // 队友的强势牌（≥A 或队友快走完）→ 让
+        if (lastByTeammate) {
+            val mateLow = (ctx.handCounts[ctx.lastMoveSeat] ?: 20) <= 4
+            if (mateLow || last.mainRank >= 13) return null
+            // 需要动 2/王去压队友的小牌 → 不值
+            if (nonBomb.first().mainRank >= 15 && last.mainRank <= 10) return null
+        }
+
+        // 顶地主：地主出小单/小对且地主快走完 → 用能压的最小"大牌"顶
+        if (lastByLandlord) {
+            val lordLeft = ctx.handCounts[ctx.landlord] ?: 20
+            if (lordLeft <= 8 && last.mainRank <= 10) {
+                val top = nonBomb.filter { it.mainRank >= 14 }.minByOrNull { it.mainRank }
+                if (top != null) return top.cards
+            }
+        }
+
+        // 残局：剩牌 ≤ 4 全力走
+        if (hand.size <= 4) return nonBomb.first().cards
+
+        // 常规：最便宜且不拆结构的
+        return nonBomb.minWithOrNull(
+            compareBy({ splitPenalty(it, hand) }, { it.mainRank * 2 - it.cards.size })
+        )?.cards
     }
 
     private fun mediumLead(ctx: AiContext): List<Card>? {
         val hand = ctx.hand
-        val leads = MoveGen.genLeads(hand).filter {
-            it.type != MoveType.BOMB && it.type != MoveType.ROCKET
-        }
-        if (leads.isEmpty()) {
-            // 只剩炸弹 → 炸
-            return MoveGen.genLeads(hand).firstOrNull()?.cards ?: hand.take(1)
-        }
-        // 组合数 ≤ 2 时先出小的送终
+        val leads = MoveGen.genLeads(hand)
+        val safeLeads = leads.filter { !it.type.isBombLike }
+        if (safeLeads.isEmpty()) return leads.firstOrNull()?.cards ?: hand.take(1)
+
         val combos = HandDecompose.decompose(hand)
-        if (combos.size <= 2) {
-            return leads.first().cards
+        // 两手清：先出对手压不住的那手，压不住就走完
+        if (combos.size <= 2) return leads.first().cards
+
+        // 对手剩 1 张 → 不送单
+        if (opponentLowSeat(ctx, 1) != null) {
+            safeLeads.firstOrNull { it.type != MoveType.SINGLE }?.let { return it.cards }
         }
-        // 对手（地主视角的农民 / 农民视角的地主）剩 1 张 → 不送单
-        val opp1 = opponentLowSeat(ctx, threshold = 1)
-        if (opp1 != null) {
-            val nonSingle = leads.firstOrNull { it.type != MoveType.SINGLE }
-            if (nonSingle != null) return nonSingle.cards
-        }
-        return leads.first().cards
+        return safeLeads.first().cards
     }
 
     // ------------------------------------------------ 困难
@@ -169,86 +196,131 @@ class AiPlayer(
         val hand = ctx.hand
         val unseen = unseenCounts(ctx)
 
-        if (ctx.lastMove == null) {
-            return hardLead(ctx, unseen)
-        }
+        if (ctx.lastMove == null) return hardLead(ctx, unseen)
 
         val beats = MoveGen.genBeats(hand, ctx.lastMove)
         if (beats.isEmpty()) return null
-
         val last = ctx.lastMove!!
+        val nonBomb = beats.filter { !it.type.isBombLike }
+        val lastByLandlord = ctx.lastMoveSeat == ctx.landlord
         val lastByTeammate = isTeammate(ctx.lastMoveSeat, ctx)
 
-        // 队友强势牌 → 让牌
-        if (lastByTeammate && last.type == MoveType.BOMB) return null
-        if (lastByTeammate && last.mainRank >= 14 && hand.size > 6) return null
-
-        // 对手剩牌告急 → 全力压制
-        val opponentLow = opponentLowSeat(ctx, threshold = 2)
-        if (opponentLow != null && !lastByTeammate) {
-            val strongest = beats.last()
-            return strongest.cards
+        // ---- 生死局判断：出牌方再走一手就赢 → 拼命压（可用炸弹）
+        val playerAboutToWin = (ctx.handCounts[ctx.lastMoveSeat] ?: 20) <= 2
+        if (playerAboutToWin && lastByLandlord) {
+            return beats.last().cards           // 最强的压（含炸弹）
+        }
+        if (playerAboutToWin && lastByTeammate) {
+            return null                          // 队友要走 → 让他走
         }
 
-        val cheap = beats.firstOrNull { it.type != MoveType.BOMB && it.type != MoveType.ROCKET }
+        // ---- 队友的牌：强势让过 / 喂牌
+        if (lastByTeammate) {
+            val mateLeft = ctx.handCounts[ctx.lastMoveSeat] ?: 20
+            if (mateLeft <= 5 || last.mainRank >= 13) return null
+            if (last.type == MoveType.BOMB) return null
+        }
 
-        // 算牌：压完这手对手是否还能反压？
-        if (cheap != null) {
-            val canBeRebeaten = existsBeatInUnseen(cheap, unseen, exclude = ctx.seat)
-            if (!canBeRebeaten && hand.size <= 10) {
-                return cheap.cards  // 无人能压，放心走
+        // ---- 非炸弹路线
+        if (nonBomb.isNotEmpty()) {
+            val lordLeft = ctx.handCounts[ctx.landlord] ?: 20
+            val cheap = nonBomb.minWithOrNull(
+                compareBy({ splitPenalty(it, hand) }, { it.mainRank * 2 - it.cards.size })
+            )!!
+
+            // 顶地主：地主小牌且手数紧 → 顶到 A/2/王（选能压的最小大牌）
+            if (lastByLandlord && lordLeft <= 10 && last.mainRank <= 11) {
+                val top = nonBomb.filter { it.mainRank >= 14 }.minByOrNull { it.mainRank }
+                if (top != null) return top.cards
             }
+
+            // 记牌：压完这手无人能反压 → 放心走（省大牌）
+            val safe = !existsBeatInUnseen(cheap, unseen)
+            if (safe && hand.size <= 12) return cheap.cards
+
+            // 大牌价值管理：中局别拿 2/王 压太小的牌（地主不紧时）
+            val earlyWaste = cheap.mainRank >= 15 && hand.size > 10 &&
+                    last.mainRank <= 9 && lordLeft > 6
+            if (!earlyWaste) return cheap.cards
         }
 
-        // 带牌动 2 / 王太早 → 忍
-        if (cheap != null && cheap.mainRank >= 15 && hand.size > 10 &&
-            last.mainRank <= 10 && !opponentLowWarn(ctx)
-        ) {
-            return null
-        }
-
-        if (cheap != null) return cheap.cards
-
-        // 只剩炸弹 / 王炸
+        // ---- 只剩/需要炸弹
         val bomb = beats.first()
-        val strategic = hand.size <= 9 || opponentMinHand(ctx) <= 6 ||
-                (isLandlordMe(ctx) && farmerMinHand(ctx) <= 4)
+        val lordLeft = ctx.handCounts[ctx.landlord] ?: 20
+        val strategic = hand.size <= 9 ||
+                (lastByLandlord && lordLeft <= 6) ||
+                farmerMinHand(ctx) <= 4
         return if (strategic) bomb.cards else null
     }
 
     private fun hardLead(ctx: AiContext, unseen: Map<Int, Int>): List<Card>? {
         val hand = ctx.hand
-        val leads = MoveGen.genLeads(hand).filter {
-            it.type != MoveType.BOMB && it.type != MoveType.ROCKET
-        }
-        val allLeads = MoveGen.genLeads(hand)
-        if (allLeads.isEmpty()) return hand.take(1)
+        val leads = MoveGen.genLeads(hand)
+        val safeLeads = leads.filter { !it.type.isBombLike }
+        if (safeLeads.isEmpty()) return leads.firstOrNull()?.cards ?: hand.take(1)
 
-        // 残局送终：组合 ≤ 2，先小后大
         val combos = HandDecompose.decompose(hand)
-        if (combos.size <= 2) return leads.firstOrNull()?.cards ?: allLeads.first().cards
 
-        // 队友只剩 1~2 张 → 送小单喂牌
+        // ---- 残局两手清：优先出"没人压得住"的一手；都压得住 → 先出大的逼牌
+        if (combos.size == 2) {
+            val unbeat = combos.map { it.move }.filter { !existsBeatInUnseen(it, unseen) }
+            if (unbeat.isNotEmpty()) return unbeat.minByOrNull { it.mainRank }!!.cards
+            return combos.maxByOrNull { it.move.mainRank }!!.move.cards
+        }
+        if (combos.size == 1) return leads.first().cards
+
+        // ---- 队友只剩 1~2 张 → 喂小单
         val mate = teammateSeat(ctx)
         if (mate != null && (ctx.handCounts[mate] ?: 20) <= 2) {
-            val smallSingle = leads.firstOrNull { it.type == MoveType.SINGLE }
-            if (smallSingle != null && smallSingle.mainRank <= 12) return smallSingle.cards
+            val small = safeLeads.firstOrNull {
+                it.type == MoveType.SINGLE && it.mainRank <= 12
+            }
+            if (small != null) return small.cards
         }
 
-        // 对手剩 1 张 → 不送单
-        val opp1 = opponentLowSeat(ctx, threshold = 1)
-        if (opp1 != null) {
-            val nonSingle = leads.firstOrNull { it.type != MoveType.SINGLE }
+        // ---- 对手剩 1 张 → 绝不送单
+        if (opponentLowSeat(ctx, 1) != null) {
+            val nonSingle = safeLeads.firstOrNull { it.type != MoveType.SINGLE }
             if (nonSingle != null) return nonSingle.cards
         }
 
-        // 剩 2 张的地主/对手 → 出大牌压制型领出（顶张）
-        if (opponentLowWarn(ctx)) {
-            val strong = leads.lastOrNull { it.type != MoveType.SINGLE }
-            if (strong != null && leads.first().mainRank < 10) return strong.cards
+        // ---- 对手剩 2 张 → 出牌型大的压制型领出
+        if (opponentLowSeat(ctx, 2) != null) {
+            val strong = safeLeads.lastOrNull { it.type != MoveType.SINGLE }
+            if (strong != null && safeLeads.first().mainRank < 12) return strong.cards
         }
 
-        return leads.firstOrNull()?.cards ?: allLeads.first().cards
+        // ---- 记牌：选对手大概率压不住的小招先走
+        val likelySafe = safeLeads.firstOrNull { !existsBeatInUnseen(it, unseen) }
+        if (likelySafe != null && likelySafe.cards.size >= 4) return likelySafe.cards
+
+        return safeLeads.first().cards
+    }
+
+    // ================================================================ 通用工具
+
+    /**
+     * 拆结构惩罚：这手牌用掉的牌会拆散手牌里的炸弹/三张/对子结构则加罚。
+     * （炸弹在 genBeats 已有 +200，此处再防"拆对/拆三凑单张"）
+     */
+    private fun splitPenalty(move: Move, hand: List<Card>): Int {
+        if (move.type.isBombLike) return 0
+        val handCounts = hand.groupBy { it.rank }.mapValues { it.value.size }
+        val usedCounts = move.cards.groupBy { it.rank }.mapValues { it.value.size }
+        var penalty = 0
+        usedCounts.forEach { (r, used) ->
+            val avail = handCounts[r] ?: 0
+            val left = avail - used
+            if (left > 0) {
+                penalty += when (left) {
+                    1 -> 2
+                    2 -> 4
+                    3 -> 8
+                    else -> 12
+                }
+            }
+        }
+        return penalty
     }
 
     // ------------------------------------------------ 记牌（困难）
@@ -263,14 +335,14 @@ class AiPlayer(
         }
     }
 
-    /** 在未见牌中是否存在能压过 candidate 的牌（简单保守估计） */
-    private fun existsBeatInUnseen(candidate: Move, unseen: Map<Int, Int>, exclude: Int): Boolean {
+    /** 未见牌中是否存在能压过 candidate 的牌 */
+    private fun existsBeatInUnseen(candidate: Move, unseen: Map<Int, Int>): Boolean {
         return when (candidate.type) {
             MoveType.SINGLE -> (candidate.mainRank + 1..17).any { (unseen[it] ?: 0) > 0 }
             MoveType.PAIR -> (candidate.mainRank + 1..15).any { (unseen[it] ?: 0) >= 2 }
             MoveType.ROCKET -> false
             else -> (candidate.mainRank + 1..15).any { (unseen[it] ?: 0) >= 3 } ||
-                    unseen.entries.any { it.value >= 4 }  // 大意估计：可能有炸
+                    unseen.entries.any { it.value >= 4 }
         }
     }
 
@@ -281,33 +353,24 @@ class AiPlayer(
         return seat != ctx.landlord && ctx.seat != ctx.landlord && seat != ctx.seat
     }
 
-    private fun isLandlordMe(ctx: AiContext): Boolean = ctx.seat == ctx.landlord
-
     private fun teammateSeat(ctx: AiContext): Int? {
-        if (ctx.landlord < 0 || isLandlordMe(ctx)) return null
+        if (ctx.landlord < 0 || ctx.seat == ctx.landlord) return null
         return (0..2).firstOrNull { it != ctx.seat && it != ctx.landlord }
     }
 
-    private fun opponentMinHand(ctx: AiContext): Int {
-        val opponents = (0..2).filter { it != ctx.seat && isOpponent(it, ctx) }
-        return opponents.minOf { ctx.handCounts[it] ?: 20 }
+    private fun farmerMinHand(ctx: AiContext): Int {
+        if (ctx.seat != ctx.landlord) return 99
+        return (0..2).filter { it != ctx.seat }.minOf { ctx.handCounts[it] ?: 20 }
     }
 
-    private fun farmerMinHand(ctx: AiContext): Int {
-        if (!isLandlordMe(ctx)) return 99
-        return (0..2).filter { it != ctx.seat }.minOf { ctx.handCounts[it] ?: 20 }
+    private fun opponentLowSeat(ctx: AiContext, threshold: Int): Int? {
+        return (0..2).firstOrNull {
+            it != ctx.seat && isOpponent(it, ctx) && (ctx.handCounts[it] ?: 20) <= threshold
+        }
     }
 
     private fun isOpponent(seat: Int, ctx: AiContext): Boolean {
         if (ctx.landlord < 0) return true
         return (seat == ctx.landlord) != (ctx.seat == ctx.landlord)
     }
-
-    /** 对手（非队友）中是否有剩牌 ≤ threshold 的座位 */
-    private fun opponentLowSeat(ctx: AiContext, threshold: Int): Int? {
-        return (0..2).firstOrNull { it != ctx.seat && isOpponent(it, ctx) &&
-                (ctx.handCounts[it] ?: 20) <= threshold }
-    }
-
-    private fun opponentLowWarn(ctx: AiContext): Boolean = opponentLowSeat(ctx, 2) != null
 }

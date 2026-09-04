@@ -25,6 +25,9 @@ import com.laoxiang.ddz.R
  *  sfx_lose       输牌
  *  sfx_kuaidian   "快点吧我等到花儿都谢了"
  *  bgm_game       对局背景乐（循环）
+ *
+ *  voice_*        v12 牌型播报/叫抢/快捷喊话语音（62 条，经 VoiceMap 批量注册，
+ *                 资源名动态查找，release 压缩需 keep.xml 白名单 @raw/voice_*）
  */
 class SoundManager(private val context: Context) {
 
@@ -60,6 +63,12 @@ class SoundManager(private val context: Context) {
         ids["win"] = pool.load(context, R.raw.sfx_win, 1)
         ids["lose"] = pool.load(context, R.raw.sfx_lose, 1)
         ids["kuaidian"] = pool.load(context, R.raw.sfx_kuaidian, 1)
+
+        // 出牌牌型/叫抢/快捷喊话语音（voice_*，共 62 条，批量注册）
+        VoiceMap.ALL.forEach { name ->
+            val id = context.resources.getIdentifier(name, "raw", context.packageName)
+            if (id != 0) ids[name] = pool.load(context, id, 1)
+        }
     }
 
     fun play(key: String, volume: Float = 1f) {
