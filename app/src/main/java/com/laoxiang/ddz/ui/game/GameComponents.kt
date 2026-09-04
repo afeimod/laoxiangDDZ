@@ -38,8 +38,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import com.laoxiang.ddz.R
 import com.laoxiang.ddz.data.Card
 import com.laoxiang.ddz.data.Deck
@@ -63,13 +65,16 @@ fun cardRes(card: Card, context: android.content.Context): Int {
     }
 }
 
-/** 单张牌 */
+/** 单张牌（badge=左上角标如「级」；warm=主牌暖色高亮+星标） */
 @Composable
 fun PokerCard(
     card: Card,
     width: Dp,
     modifier: Modifier = Modifier,
     raised: Boolean = false,
+    badge: String? = null,
+    badgeColor: Color = Color(0xFF2E7D32),
+    warm: Boolean = false,
     onClick: (() -> Unit)? = null
 ) {
     val ctx = LocalContext.current
@@ -111,6 +116,37 @@ fun PokerCard(
                     fontWeight = FontWeight.Black,
                     fontSize = 14.sp
                 )
+            }
+        }
+        // 主牌暖色高亮 + 星标（升级等游戏用）
+        if (warm) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color(0x30FFD54F))
+            )
+            Text(
+                "★",
+                fontSize = (width.value * 0.16f).coerceAtMost(13f).sp,
+                color = Color(0xFFFFB300),
+                fontWeight = FontWeight.Black,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(horizontal = 2.dp)
+            )
+        }
+        // 角标（掼蛋/升级级牌「级」等）
+        badge?.let { b ->
+            Box(
+                Modifier
+                    .align(Alignment.TopStart)
+                    .offset(x = (-2).dp, y = (-2).dp)
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(badgeColor)
+                    .border(0.5.dp, Color(0x66FFFFFF), RoundedCornerShape(5.dp))
+                    .padding(horizontal = 4.dp, vertical = 0.5.dp)
+            ) {
+                Text(b, fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.Black)
             }
         }
     }
@@ -506,3 +542,250 @@ internal fun idxAtX(g: HandGeo, x: Float): Int? {
     if (rel <= 0f) return 0
     return (rel / g.stepPx).toInt().coerceIn(0, g.n - 1)
 }
+
+// ------------------------------------------------ 多排手牌（掼蛋/升级 25~27 张大 hand）
+
+/** 单排几何 + 该排每张牌中心的 x 像素（含组间隙，供手势映射） */
+internal data class RowGeo(
+    val ids: List<Int>,
+    val startXpx: Float,
+    val cardWpx: Float,
+    val centersPx: List<Float>,
+    val topPx: Float,
+    val botPx: Float
+)
+
+internal data class HandGeo2(val rows: List<RowGeo>)
+
+/** (x, y) → 牌 id：先按 y 找排，再取该排中心最近的牌 */
+internal fun cardIdAt(g: HandGeo2, x: Float, y: Float): Int? {
+    if (g.rows.isEmpty()) return null
+    val row = g.rows.firstOrNull { y >= it.topPx && y < it.botPx }
+        ?: if (y < g.rows.first().topPx) g.rows.first()
+        else g.rows.last()
+    if (row.ids.isEmpty()) return null
+    val last = row.centersPx.last()
+    val first = row.centersPx.first()
+    if (x < first - row.cardWpx * 0.45f || x > last + row.cardWpx * 0.45f) return null
+    var best = 0
+    var bestD = Float.MAX_VALUE
+    row.centersPx.forEachIndexed { i, cx ->
+        val d = kotlin.math.abs(x - cx)
+        if (d < bestD) { bestD = d; best = i }
+    }
+    return row.ids[best]
+}
+
+/**
+ * 多排手牌（1~3 排自动）：大 hand（掼蛋 27 / 升级 25~33）分排显示，支持
+ * 单击选牌 + 按住横向滑动跨排多选 + 上下拖动整叠牌面；[gapAfterIds] 在指定牌后插入组间隙（自动理牌分组），
+ * [badges]/[warmIds] 为级牌角标与主牌暖色高亮；[availH] 为可用高度（超出时自动缩小牌面，
+ * 底排始终贴底不再被剪切），[onHeight] 回调实际内容高度（供界面定位按钮）。
+ */
+@Composable
+internal fun HandRows(
+    hand: List<Card>,
+    selected: Set<Int>,
+    onToggle: (Int) -> Unit,
+    onSweep: (List<Int>) -> Unit,
+    modifier: Modifier = Modifier,
+    forceRows: Int = 0,
+    gapAfterIds: Set<Int> = emptySet(),
+    badges: Map<Int, String> = emptyMap(),
+    warmIds: Set<Int> = emptySet(),
+    cardScale: Float = 0.80f,
+    availH: Dp = Dp.Unspecified,
+    onHeight: (Dp) -> Unit = {}
+) {
+    val config = LocalConfiguration.current
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val n = hand.size
+        if (n == 0) return@BoxWithConstraints
+        val screenH = config.screenHeightDp.dp
+        val w0 = screenH * 0.24f * CARD_RATIO * cardScale
+        val avail = (maxWidth - 2.dp) * 0.90f
+
+        val rowCount = when {
+            forceRows > 0 -> forceRows
+            n <= 14 -> 1
+            n <= 30 -> 2
+            else -> 3
+        }
+        // 分排：顶排少、底排多（底排更靠近拇指）
+        val rowSizes = splitRowSizes(n, rowCount)   // 自顶向底
+        val rowsCards: List<List<Card>> = run {
+            var s = 0
+            rowSizes.map { c -> hand.subList(s, (s + c).coerceAtMost(n)).also { s += c } }.filter { it.isNotEmpty() }
+        }
+
+        // 统一卡宽：按最大排张数计算（各排视觉一致）
+        val maxM = rowsCards.maxOf { it.size }
+        val rowGapRef = 3.dp
+        var visible = 0.60f
+        var w = minOf(w0, avail / (1f + (maxM - 1) * visible))
+        if (w < w0) {
+            visible = ((avail / w0 - 1f) / (maxM - 1).coerceAtLeast(1)).coerceIn(0.18f, 0.60f)
+            w = minOf(w0, avail / (1f + (maxM - 1) * visible))
+        }
+        // 可用高度约束：超出时缩小牌面（保证底排完整贴底、不被底边剪切）
+        if (availH != Dp.Unspecified && rowsCards.isNotEmpty()) {
+            val maxCardH = (availH - rowGapRef * (rowsCards.size - 1)) / rowsCards.size
+            if (w / CARD_RATIO > maxCardH) w = maxCardH * CARD_RATIO
+        }
+        val step = w * visible
+        val gapW = w * 0.16f                  // 组间隙宽度
+        val cardH = w / CARD_RATIO
+        val rowGap = rowGapRef
+
+        val density = LocalDensity.current
+        // 预计算每排几何（像素），绘制与手势共用同一份数据
+        val rowsGeo = rowsCards.map { rowCards ->
+            // x 偏移序列：每张牌的起点
+            val offsets = ArrayList<Float>(rowCards.size)
+            var x = 0f
+            rowCards.forEachIndexed { i, c ->
+                offsets += x
+                x += step.value
+                if (c.id in gapAfterIds) x += gapW.value
+            }
+            val totalDp = x + w.value - step.value   // 末张占满
+            val startX = (maxWidth - totalDp.dp) / 2
+            RowGeoDraft(offsets, startX.value)
+        }
+        val containerH = cardH * rowsCards.size + rowGap * (rowsCards.size - 1)
+
+        // 拖动牌面：默认贴底（底排完整可见），可上提查看桌面，永不越过初始贴底位置
+        var panPx by remember { mutableStateOf(0f) }
+        LaunchedEffect(hand.size, rowsCards.size) { panPx = 0f }
+        val maxUpPx = with(density) {
+            (containerH - 48.dp).coerceAtLeast(0.dp).toPx()
+        }
+        SideEffect { onHeight(containerH) }
+
+        val geo = rememberUpdatedState(
+            HandGeo2(
+                rowsCards.mapIndexed { ri, rowCards ->
+                    val draft = rowsGeo[ri]
+                    val topPx = with(density) { ((cardH + rowGap) * ri).toPx() }
+                    val botPx = with(density) { ((cardH + rowGap) * ri + cardH).toPx() }
+                    RowGeo(
+                        ids = rowCards.map { it.id },
+                        startXpx = with(density) { draft.startX.dp.toPx() },
+                        cardWpx = with(density) { w.toPx() },
+                        centersPx = draft.offsets.map { off ->
+                            with(density) { (draft.startX + off + w.value / 2f).dp.toPx() }
+                        },
+                        topPx = topPx,
+                        botPx = botPx
+                    )
+                }
+            )
+        )
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .height(containerH)
+                .offset { IntOffset(0, panPx.roundToInt()) }
+                .pointerInput(maxUpPx) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        var mode = 0                       // 0=未定，1=横向滑选，2=纵向拖牌
+                        var lastX = down.position.x
+                        var panStart = 0f
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (mode == 0) {
+                                val dx = kotlin.math.abs(change.position.x - down.position.x)
+                                val dy = kotlin.math.abs(change.position.y - down.position.y)
+                                if (dx > viewConfiguration.touchSlop || dy > viewConfiguration.touchSlop) {
+                                    mode = if (dx >= dy) 1 else 2
+                                    if (mode == 1) {
+                                        // 起点上的牌先纳入多选
+                                        cardIdAt(geo.value, lastX, down.position.y)?.let { id ->
+                                            onSweep(listOf(id))
+                                        }
+                                    } else {
+                                        panStart = panPx
+                                    }
+                                }
+                            }
+                            when (mode) {
+                                1 -> {
+                                    // 逐点采样映射（跨排时 y 变化自动换排）
+                                    val a = minOf(lastX, change.position.x)
+                                    val b = maxOf(lastX, change.position.x)
+                                    val y = change.position.y
+                                    val ids = sampledIds(geo.value, a, b, y)
+                                    if (ids.isNotEmpty()) onSweep(ids)
+                                    lastX = change.position.x
+                                    change.consume()
+                                }
+                                2 -> {
+                                    panPx = (panStart + change.position.y - down.position.y)
+                                        .coerceIn(-maxUpPx, 0f)
+                                    change.consume()
+                                }
+                            }
+                            if (!change.pressed) break
+                        }
+                    }
+                }
+        ) {
+            rowsGeo.forEachIndexed { ri, draft ->
+                val rowCards = rowsCards[ri]
+                // 手动绝对布局（含组间隙），Row 负间距无法表达逐项间隙
+                Box(Modifier.fillMaxWidth().height(cardH)) {
+                    rowCards.forEachIndexed { i, c ->
+                        val xDp = draft.startX.dp + draft.offsets[i].dp
+                        val appear = remember { MutableTransitionState(false).apply { targetState = true } }
+                        androidx.compose.animation.AnimatedVisibility(
+                            visibleState = appear,
+                            enter = fadeIn(tween(100)) + slideInVertically(tween(130)) { -it / 3 },
+                            modifier = Modifier.offset(x = xDp)
+                        ) {
+                            PokerCard(
+                                c, w,
+                                raised = c.id in selected,
+                                badge = badges[c.id],
+                                warm = c.id in warmIds,
+                                onClick = { onToggle(c.id) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 分排张数：底排最多、顶排均摊（自顶向底返回） */
+private fun splitRowSizes(n: Int, rows: Int): List<Int> {
+    if (rows <= 1 || n <= 0) return listOf(n)
+    val base = n / rows
+    var extra = n % rows
+    val sizes = ArrayList<Int>(rows)
+    // 自底向上分配：底排 base(+extra)，顶排少
+    val tmp = IntArray(rows)
+    for (i in rows - 1 downTo 0) {
+        tmp[i] = base + if (extra > 0) { extra--; 1 } else 0
+    }
+    // 顶排最多比底排少 1~2 张的均衡已由 base/extra 保证；把顶排多出的挪到底排
+    for (i in 0 until rows) sizes += tmp[i]
+    return sizes
+}
+
+/** 滑动采样：在 [a,b] x 区间与当前 y 附近收集牌 id（跨排连续多选） */
+private fun sampledIds(g: HandGeo2, a: Float, b: Float, y: Float): List<Int> {
+    val out = ArrayList<Int>()
+    val stepPx = g.rows.firstOrNull()?.cardWpx?.coerceAtLeast(1f) ?: return out
+    var x = a
+    while (x <= b) {
+        cardIdAt(g, x, y)?.let { id -> if (id !in out) out += id }
+        x += stepPx * 0.4f
+    }
+    cardIdAt(g, b, y)?.let { id -> if (id !in out) out += id }
+    return out
+}
+
+private data class RowGeoDraft(val offsets: List<Float>, val startX: Float)

@@ -32,9 +32,10 @@ data class Card(
     /** 王者：小王 0 / 大王 1，非王 null */
     val jokerIndex: Int? get() = if (suit == CardSuit.JOKER) rank - 16 else null
 
-    /** 展示字符：3..10、J Q K A 2、小王/大王 */
+    /** 展示字符：2、3..10、J Q K A、小王/大王 */
     val displayLabel: String
         get() = when (rank) {
+            2 -> "2"
             in 3..10 -> rank.toString()
             11 -> "J"
             12 -> "Q"
@@ -62,6 +63,26 @@ object Deck {
         }
         cards += Card(id++, 16, CardSuit.JOKER) // 小王
         cards += Card(id++, 17, CardSuit.JOKER) // 大王
+        return cards
+    }
+
+    /**
+     * 双副牌 108 张（掼蛋/升级用）：第一副 id 0..53，第二副 id 54..107。
+     * 牌面 2..A（rank 2..14）+ 双王，掼蛋 2 最小、升级 2 为普通点数。
+     */
+    fun doubleDeck(): List<Card> {
+        val cards = ArrayList<Card>(108)
+        val suits = listOf(CardSuit.SPADE, CardSuit.HEART, CardSuit.DIAMOND, CardSuit.CLUB)
+        var id = 0
+        repeat(2) {
+            for (rank in 2..14) {
+                for (suit in suits) {
+                    cards += Card(id++, rank, suit)
+                }
+            }
+            cards += Card(id++, 16, CardSuit.JOKER) // 小王
+            cards += Card(id++, 17, CardSuit.JOKER) // 大王
+        }
         return cards
     }
 

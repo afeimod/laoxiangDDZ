@@ -18,11 +18,17 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.laoxiang.ddz.data.PdkMode
 import com.laoxiang.ddz.ui.collection.CollectionScreen
+import com.laoxiang.ddz.ui.game.BigTwoGameScreen
+import com.laoxiang.ddz.ui.game.BigTwoViewModel
 import com.laoxiang.ddz.ui.game.GameMode
 import com.laoxiang.ddz.ui.game.GameScreen
 import com.laoxiang.ddz.ui.game.GameViewModel
+import com.laoxiang.ddz.ui.game.GuandanGameScreen
+import com.laoxiang.ddz.ui.game.GuandanViewModel
 import com.laoxiang.ddz.ui.game.PdkGameScreen
 import com.laoxiang.ddz.ui.game.PdkViewModel
+import com.laoxiang.ddz.ui.game.ShengjiGameScreen
+import com.laoxiang.ddz.ui.game.ShengjiViewModel
 import com.laoxiang.ddz.ui.lobby.LobbyScreen
 import com.laoxiang.ddz.ui.result.PdkResultScreen
 import com.laoxiang.ddz.ui.result.ResultScreen
@@ -69,12 +75,15 @@ class MainActivity : ComponentActivity() {
 }
 
 /** 简单路由（与 Application 类 LaoXiangApp 同名会冲突，故叫 Root） */
-private enum class Page { LOBBY, ROOM, GAME, COLLECTION, PDK }
+private enum class Page { LOBBY, ROOM, GAME, COLLECTION, PDK, BIGTWO, GUANDAN, SHENGJI }
 
 @Composable
 fun LaoXiangRoot() {
     val gameVm: GameViewModel = viewModel()
     val pdkVm: PdkViewModel = viewModel()
+    val btVm: BigTwoViewModel = viewModel()
+    val gdVm: GuandanViewModel = viewModel()
+    val sjVm: ShengjiViewModel = viewModel()
     var page by remember { mutableStateOf(Page.LOBBY) }
     val snapshot by gameVm.snapshot.collectAsState()
     val showResult = snapshot?.result != null
@@ -106,6 +115,39 @@ fun LaoXiangRoot() {
             onPlayPdk = { mode ->
                 pdkVm.start(mode)
                 page = Page.PDK
+            },
+            onPlayBigTwo = {
+                btVm.start()
+                page = Page.BIGTWO
+            },
+            onPlayGuandan = {
+                gdVm.start()
+                page = Page.GUANDAN
+            },
+            onPlayShengji = {
+                sjVm.start()
+                page = Page.SHENGJI
+            }
+        )
+        page == Page.BIGTWO -> BigTwoGameScreen(
+            vm = btVm,
+            onExit = {
+                btVm.exitGame()
+                page = Page.LOBBY
+            }
+        )
+        page == Page.GUANDAN -> GuandanGameScreen(
+            vm = gdVm,
+            onExit = {
+                gdVm.exitGame()
+                page = Page.LOBBY
+            }
+        )
+        page == Page.SHENGJI -> ShengjiGameScreen(
+            vm = sjVm,
+            onExit = {
+                sjVm.exitGame()
+                page = Page.LOBBY
             }
         )
         page == Page.GAME && showResult -> ResultScreen(

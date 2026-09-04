@@ -5,18 +5,28 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.laoxiang.ddz.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -52,9 +62,10 @@ object TableBg {
  * 牌桌背景图层。
  * key=custom 且本地有图时异步解码加载（超大相册图按 ~1920 降采样），
  * 加载完成前先给深蓝底色兜底；其余 key 直接用内置图。
+ * [engraving]：游戏专属刻字水印（如"老乡跑得快"），覆盖在内置/自定义背景之上。
  */
 @Composable
-fun TableBackground(bgKey: String, modifier: Modifier = Modifier) {
+fun TableBackground(bgKey: String, modifier: Modifier = Modifier, engraving: String? = null) {
     val ctx = LocalContext.current
     if (bgKey == "custom" && TableBg.hasCustom(ctx)) {
         // 文件时间戳作为刷新锚点：重新选图后能立即换新
@@ -72,7 +83,7 @@ fun TableBackground(bgKey: String, modifier: Modifier = Modifier) {
                 modifier = modifier
             )
         } else {
-            androidx.compose.foundation.layout.Box(modifier.background(Color(0xFF1B3C6E)))
+            Box(modifier.background(Color(0xFF1B3C6E)))
         }
     } else {
         Image(
@@ -81,6 +92,44 @@ fun TableBackground(bgKey: String, modifier: Modifier = Modifier) {
             contentScale = ContentScale.Crop,
             modifier = modifier
         )
+    }
+    if (!engraving.isNullOrBlank()) {
+        Box(modifier, contentAlignment = Alignment.Center) {
+            // 双层错位营造"刻字"凹陷感：暗影层 + 高光层 + 主字层
+            Text(
+                engraving,
+                fontSize = 46.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = 6.sp,
+                style = TextStyle(
+                    shadow = Shadow(
+                        color = Color(0x66000000),
+                        offset = Offset(3f, 3f),
+                        blurRadius = 6f
+                    )
+                ),
+                color = Color(0x2EFFFFFF),
+                modifier = Modifier.graphicsLayer {
+                    rotationZ = -6f
+                    scaleX = 1.06f; scaleY = 1.06f
+                }
+            )
+            Text(
+                engraving,
+                fontSize = 46.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = 6.sp,
+                style = TextStyle(
+                    shadow = Shadow(
+                        color = Color(0x4D000000),
+                        offset = Offset(0f, 4f),
+                        blurRadius = 10f
+                    )
+                ),
+                color = Color(0x30FFFFFF),
+                modifier = Modifier.graphicsLayer { rotationZ = -6f }
+            )
+        }
     }
 }
 

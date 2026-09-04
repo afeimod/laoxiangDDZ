@@ -237,5 +237,12 @@ class PdkViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** UI 层直接播放短音效（发牌逐张等） */
+
+    /** 单机局快捷喊话：本地播语音（气泡由界面层显示） */
+    fun localChat(phrase: String) {
+        val code = CHAT_PHRASES.indexOf(phrase) + 1
+        VoiceMap.forChat(code)?.let { sound.play(it, 1f) }
+    }
+
     fun sfx(key: String, vol: Float = 1f) = sound.play(key, vol)
 }

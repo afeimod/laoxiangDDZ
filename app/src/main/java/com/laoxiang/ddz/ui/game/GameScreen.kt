@@ -77,6 +77,7 @@ fun GameScreen(gameVm: GameViewModel, onExit: () -> Unit) {
     val prev = snap.seats.first { it.seat == (mySeat + 2) % 3 }
     val counter by gameVm.cardCounter.collectAsState()
     val bubbles by gameVm.chatBubbles.collectAsState()
+    val opNotice by gameVm.opNotice.collectAsState()
 
     // ---------- 状态
     var toast by remember { mutableStateOf<Pair<Long, String>?>(null) }
@@ -149,6 +150,13 @@ fun GameScreen(gameVm: GameViewModel, onExit: () -> Unit) {
             toast = null
         }
     }
+    // 联机操作无响应提示 → 转成屏幕 toast（避免“点了没反应”的困惑）
+    LaunchedEffect(opNotice) {
+        if (opNotice != null) {
+            toast = System.nanoTime() to (opNotice ?: "")
+            gameVm.clearOpNotice()
+        }
+    }
 
     // ---------- 发牌动画：新一局手牌逐张翻出，每张同步“啩嗒”声；地主拿底牌时补发增量 ----------
     var animRound by remember { mutableStateOf(-1) }
@@ -185,7 +193,8 @@ fun GameScreen(gameVm: GameViewModel, onExit: () -> Unit) {
             // 牌桌背景：预设 4 款 / 相册自定义（v12 多元化背景）
             TableBackground(
                 bgKey = gameVm.prefs.tableBg,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                engraving = "老乡斗地主"
             )
 
             LandscapeTable(
@@ -352,15 +361,28 @@ private fun LandscapeTable(
             SeatPlayArea(seat = next, phase = snap.phase, cardW = playedCardW * 0.8f)
         }
 
-        // ---- 中央：叫抢面板 / 我的出牌
+        // ---- 中央：叫抢面板（底牌背面 + 等待提示） / 我的出牌
         val centerModifier = Modifier
             .align(Alignment.Center)
             .offset(y = (-14).dp)
         if (snap.phase in setOf(Phase.BIDDING, Phase.ROBBING)) {
-            BiddingCenter(
-                snap = snap, mySeat = mySeat, gameVm = gameVm, onToast = onToast,
-                modifier = centerModifier
-            )
+            Column(centerModifier, horizontalAlignment = Alignment.CenterHorizontally) {
+                if (snap.phase == Phase.BIDDING && snap.bottomHidden) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        CardBack(32.dp); CardBack(32.dp); CardBack(32.dp)
+                    }
+                    Spacer(Modifier.height(12.dp))
+                }
+                val cursor = if (snap.phase == Phase.BIDDING) snap.bidCursor else snap.robCursor
+                if ((snap.phase == Phase.BIDDING && snap.bidCursor != mySeat) ||
+                    (snap.phase == Phase.ROBBING && snap.robCursor != mySeat)
+                ) {
+                    Text(
+                        "等「${nameOf(snap, cursor)}」${if (snap.phase == Phase.BIDDING) "叫地主" else "抢地主"}…",
+                        color = Color(0xCCFFFFFF), fontSize = 14.sp
+                    )
+                }
+            }
         } else {
             Column(
                 centerModifier,
@@ -384,45 +406,85 @@ private fun LandscapeTable(
             onSweep = { gameVm.selectCards(it) },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(start = 46.dp, end = 46.dp, bottom = 4.dp)
+                .padding(start = 46.dp, end = 46.dp, bottom = GAME_STRIP_H)
         )
 
-        // ---- 底部中央：出牌按钮 / 等待提示（浮在手牌上方）
-        Column(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = handH + 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            if (myTurn) {
-                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    PillButton(
-                        text = "不 出",
-                        container = bluePillBrush(),
-                        enabled = snap.lastMove != null
-                    ) {
-                        val err = gameVm.passTurn()
-                        if (err != null) onToast(err)
-                    }
-                    PillButton(text = "提 示", container = bluePillBrush()) {
-                        val err = gameVm.hint()
-                        if (err != null) onToast(err)
-                    }
-                    PillButton(text = "出 牌", container = orangePillBrush()) {
-                        val err = gameVm.playSelected()
-                        if (err != null) onToast(err)
-                    }
+        // ---- 操作按钮：手牌正上方居中（不出/提示/出牌、叫/抢按钮保持在中间）----
+        val myBidTurn = (snap.phase == Phase.BIDDING && snap.bidCursor == mySeat) ||
+                (snap.phase == Phase.ROBBING && snap.robCursor == mySeat)
+        if (myBidTurn) {
+            Row(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = GAME_STRIP_H + handH + 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(20.dp)
+            ) {
+                PillButton(
+                    text = if (snap.phase == Phase.BIDDING) "不 叫" else "不 抢",
+                    container = bluePillBrush()
+                ) {
+                    val err = gameVm.bid(false)
+                    if (err != null) onToast(err)
                 }
-            } else if (waitHint.isNotEmpty()) {
-                Text(waitHint, fontSize = 13.sp, color = Color(0xCCFFFFFF))
+                PillButton(
+                    text = if (snap.phase == Phase.BIDDING) "叫地主" else "抢地主",
+                    container = orangePillBrush()
+                ) {
+                    val err = gameVm.bid(true)
+                    if (err != null) onToast(err)
+                }
+            }
+        } else if (myTurn) {
+            Row(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = GAME_STRIP_H + handH + 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(20.dp)
+            ) {
+                PillButton(
+                    text = "不 出",
+                    container = bluePillBrush(),
+                    enabled = snap.lastMove != null
+                ) {
+                    val err = gameVm.passTurn()
+                    if (err != null) onToast(err)
+                }
+                PillButton(text = "提 示", container = bluePillBrush()) {
+                    val err = gameVm.hint()
+                    if (err != null) onToast(err)
+                }
+                PillButton(text = "出 牌", container = orangePillBrush()) {
+                    val err = gameVm.playSelected()
+                    if (err != null) onToast(err)
+                }
             }
         }
 
-        // ---- 左下：我的头像（上移到手牌上方，让手牌左右居中）
+        // ---- 右下角：仅快捷喊话入口（低于纸牌，参照参考图）----
+        Row(
+            Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 10.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            StripChatButton(onClick = onShowChat)
+        }
+
+        // ---- 等待提示（仅出牌阶段非我回合；叫抢阶段提示在中央面板）
+        if (!myTurn && snap.phase == Phase.PLAYING && waitHint.isNotEmpty()) {
+            Text(
+                waitHint, fontSize = 13.sp, color = Color(0xCCFFFFFF),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = GAME_STRIP_H + 6.dp)
+            )
+        }
+
+        // ---- 左下：我的头像（低于纸牌）
         Row(
             Modifier
                 .align(Alignment.BottomStart)
-                .padding(start = 12.dp, bottom = handH + 8.dp),
+                .padding(start = 12.dp, bottom = 6.dp),
             verticalAlignment = Alignment.Bottom
         ) {
             val myBubble = bubbleFor(bubbles, bidBubbles, mySeat)
@@ -522,7 +584,6 @@ private fun GameToolbar(
                     modifier = Modifier.padding(horizontal = 6.dp)
                 )
             }
-            ToolbarButton("喊话", onClick = onShowChat)
             ToolbarButton("离桌", danger = true, onClick = onExit)
         }
         // 记牌面板：展开时居中挂在工具条下方
@@ -577,56 +638,6 @@ private fun SeatPlayArea(
                 PassTag("要不起")
             phase == Phase.PLAYING && seat.handCount == 0 ->
                 Text("走完了！", color = Gold, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-        }
-    }
-}
-
-/** 叫抢面板（桌面中央，橙=叫 蓝=不叫） */
-@Composable
-private fun BiddingCenter(
-    snap: com.laoxiang.ddz.data.GameSnapshot,
-    mySeat: Int,
-    gameVm: GameViewModel,
-    onToast: (String?) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val myBidTurn = (snap.phase == Phase.BIDDING && snap.bidCursor == mySeat) ||
-            (snap.phase == Phase.ROBBING && snap.robCursor == mySeat)
-    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        if (snap.phase == Phase.BIDDING && snap.bottomHidden) {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                CardBack(32.dp); CardBack(32.dp); CardBack(32.dp)
-            }
-            Spacer(Modifier.height(12.dp))
-        }
-        if (myBidTurn) {
-            Text(
-                if (snap.phase == Phase.BIDDING) "你叫不叫地主？" else "抢不抢地主？",
-                color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp
-            )
-            Spacer(Modifier.height(14.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                PillButton(
-                    text = if (snap.phase == Phase.BIDDING) "不 叫" else "不 抢",
-                    container = bluePillBrush()
-                ) {
-                    val err = gameVm.bid(false)
-                    if (err != null) onToast(err)
-                }
-                PillButton(
-                    text = if (snap.phase == Phase.BIDDING) "叫地主" else "抢地主",
-                    container = orangePillBrush()
-                ) {
-                    val err = gameVm.bid(true)
-                    if (err != null) onToast(err)
-                }
-            }
-        } else {
-            val cursor = if (snap.phase == Phase.BIDDING) snap.bidCursor else snap.robCursor
-            Text(
-                "等「${nameOf(snap, cursor)}」${if (snap.phase == Phase.BIDDING) "叫地主" else "抢地主"}…",
-                color = Color(0xCCFFFFFF), fontSize = 14.sp
-            )
         }
     }
 }

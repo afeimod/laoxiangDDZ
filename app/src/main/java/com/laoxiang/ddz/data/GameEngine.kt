@@ -13,7 +13,8 @@ import kotlin.random.Random
  * 计分规则：底分 100 × 倍数（抢地主 / 炸弹王炸 / 春天各×2）。
  *           地主赢：地主 +2倍，两家农民各 -1倍；地主输反之。
  */
-enum class Phase { WAITING, DEALING, BIDDING, ROBBING, PLAYING, GAME_OVER }
+/** BURYING = 升级庄家扣底阶段（捡起 8 张底牌后手动扣回 8 张） */
+enum class Phase { WAITING, DEALING, BIDDING, ROBBING, BURYING, PLAYING, GAME_OVER }
 
 @kotlinx.serialization.Serializable
 enum class AiLevel(val label: String) { EASY("简单"), MEDIUM("中等"), HARD("困难") }

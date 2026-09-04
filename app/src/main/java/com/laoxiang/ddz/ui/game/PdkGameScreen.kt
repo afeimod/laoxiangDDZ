@@ -41,7 +41,11 @@ fun PdkGameScreen(pdkVm: PdkViewModel, onExit: () -> Unit) {
     val snapshot by pdkVm.snapshot.collectAsState()
     val snap = snapshot ?: run {
         Box(Modifier.fillMaxSize()) {
-            TableBackground(bgKey = pdkVm.prefs.tableBg, modifier = Modifier.fillMaxSize())
+            TableBackground(
+                bgKey = pdkVm.prefs.tableBg,
+                modifier = Modifier.fillMaxSize(),
+                engraving = "老乡跑得快"
+            )
             Box(
                 Modifier.fillMaxSize().background(Color(0xFF16305C).copy(alpha = 0.5f)),
                 contentAlignment = Alignment.Center
@@ -66,6 +70,9 @@ fun PdkGameScreen(pdkVm: PdkViewModel, onExit: () -> Unit) {
     var toast by remember { mutableStateOf<Pair<Long, String>?>(null) }
     var showCounter by remember { mutableStateOf(false) }
     var bigText by remember { mutableStateOf("") }
+    var showChat by remember { mutableStateOf(false) }
+    var myBubble by remember { mutableStateOf<Pair<Long, String>?>(null) }
+    LaunchedEffect(myBubble?.first) { if (myBubble != null) { delay(2600); myBubble = null } }
     val flash = remember { Animatable(0f) }
     val shake = remember { Animatable(0f) }
     val bigTextScale = remember { Animatable(0f) }
@@ -137,7 +144,11 @@ fun PdkGameScreen(pdkVm: PdkViewModel, onExit: () -> Unit) {
             (3..15).associateWith { r -> 4 - (played[r] ?: 0) - (mine[r] ?: 0) }
         }
 
-        TableBackground(bgKey = pdkVm.prefs.tableBg, modifier = Modifier.fillMaxSize())
+        TableBackground(
+            bgKey = pdkVm.prefs.tableBg,
+            modifier = Modifier.fillMaxSize(),
+            engraving = "老乡跑得快"
+        )
 
         // ---- 顶部工具条
         Row(
@@ -250,19 +261,17 @@ fun PdkGameScreen(pdkVm: PdkViewModel, onExit: () -> Unit) {
             onSweep = { pdkVm.selectCards(it) },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(start = 46.dp, end = 46.dp, bottom = 4.dp)
+                .padding(start = 46.dp, end = 46.dp, bottom = GAME_STRIP_H)
         )
 
-        // ---- 底部按钮
-        val config = LocalConfiguration.current
-        val screenH = config.screenHeightDp.dp
-        val handH = screenH * 0.30f
+        // ---- 操作按钮：手牌正上方居中（不出/提示/出牌保持在中间）
         if (myTurn) {
+            val handH = LocalConfiguration.current.screenHeightDp.dp * 0.30f
             Row(
                 Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = handH + 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(18.dp)
+                    .padding(bottom = GAME_STRIP_H + handH + 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 PdkPillButton("不 出", pdkBluePillBrush(), enabled = pdkVm.canPass()) {
                     val err = pdkVm.passTurn()
@@ -279,15 +288,24 @@ fun PdkGameScreen(pdkVm: PdkViewModel, onExit: () -> Unit) {
             }
         }
 
-        // ---- 左下：我的头像（用玩家自选形象）
+        // ---- 右下角：仅快捷喊话入口（低于纸牌）
+        Row(
+            Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 10.dp, bottom = 6.dp)
+        ) {
+            StripChatButton { showChat = true }
+        }
+
+        // ---- 左下：我的头像（用玩家自选形象，低于纸牌）
         Row(
             Modifier
                 .align(Alignment.BottomStart)
-                .padding(start = 12.dp, bottom = handH + 8.dp),
+                .padding(start = 12.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             AvatarImage(
-                me.avatar, 46.dp,
+                me.avatar, 44.dp,
                 Modifier.border(
                     2.5.dp,
                     if (me.isTurn) Color(0xFFFFC107) else Color(0x66FFFFFF),
@@ -299,6 +317,26 @@ fun PdkGameScreen(pdkVm: PdkViewModel, onExit: () -> Unit) {
                 me.name,
                 fontSize = 12.sp, fontWeight = FontWeight.Bold,
                 color = if (me.isTurn) Color(0xFFFFE082) else Color.White
+            )
+            myBubble?.let { (_, t) ->
+                Spacer(Modifier.width(8.dp))
+                Bubble(t)
+            }
+        }
+
+        // ---- 快捷喊话面板
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showChat,
+            enter = androidx.compose.animation.fadeIn(),
+            exit = androidx.compose.animation.fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            QuickChatPanel(
+                onSend = { p ->
+                    pdkVm.localChat(p)
+                    myBubble = System.nanoTime() to p
+                },
+                onDismiss = { showChat = false }
             )
         }
 
@@ -440,7 +478,7 @@ private fun PdkCounterPanel(counts: Map<Int, Int>, modifier: Modifier = Modifier
 }
 
 @Composable
-private fun PdkToolButton(
+internal fun PdkToolButton(
     text: String,
     danger: Boolean = false,
     active: Boolean = false,
@@ -467,7 +505,7 @@ private fun PdkToolButton(
 }
 
 @Composable
-private fun PdkPillButton(
+internal fun PdkPillButton(
     text: String,
     container: Brush,
     enabled: Boolean = true,
@@ -496,8 +534,8 @@ private fun PdkPillButton(
     }
 }
 
-private fun pdkBluePillBrush(): Brush =
+internal fun pdkBluePillBrush(): Brush =
     Brush.verticalGradient(listOf(Color(0xFF5B8BE8), Color(0xFF3A63C0)))
 
-private fun pdkOrangePillBrush(): Brush =
+internal fun pdkOrangePillBrush(): Brush =
     Brush.verticalGradient(listOf(Color(0xFFFFC24D), Color(0xFFF07E1E)))

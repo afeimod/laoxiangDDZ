@@ -27,13 +27,16 @@ import com.laoxiang.ddz.data.PdkMode
 import com.laoxiang.ddz.ui.theme.Gold
 
 /**
- * 棋牌合集：斗地主 / 跑得快（三人·四人）/ 更多棋牌敬请期待。
+ * 棋牌合集：斗地主 / 跑得快（三人·四人）/ 锄大地 / 掼蛋 / 升级。
  */
 @Composable
 fun CollectionScreen(
     onBack: () -> Unit,
     onPlayDdz: () -> Unit,
-    onPlayPdk: (PdkMode) -> Unit
+    onPlayPdk: (PdkMode) -> Unit,
+    onPlayBigTwo: () -> Unit = {},
+    onPlayGuandan: () -> Unit = {},
+    onPlayShengji: () -> Unit = {}
 ) {
     Box(
         Modifier
@@ -139,6 +142,51 @@ fun CollectionScreen(
                     desc = PdkMode.FOUR.desc + " · 先跑为赢",
                     onClick = { onPlayPdk(PdkMode.FOUR) }
                 )
+                GameCard(
+                    icon = {
+                        Image(
+                            painter = painterResource(R.drawable.cdd_icon),
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.height(62.dp)
+                        )
+                    },
+                    title = "锄大地",
+                    badge = "新上架",
+                    badgeColor = Color(0xFF6A1B9A),
+                    desc = "大老二 · 2最大 · 五张型克制 · 方块三先出",
+                    onClick = onPlayBigTwo
+                )
+                GameCard(
+                    icon = {
+                        Image(
+                            painter = painterResource(R.drawable.gd_icon),
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.height(62.dp)
+                        )
+                    },
+                    title = "掼蛋",
+                    badge = "新上架",
+                    badgeColor = Color(0xFFAD1457),
+                    desc = "两副牌 2v2 · 级牌升级 · 炸弹同花顺 · 双上过A",
+                    onClick = onPlayGuandan
+                )
+                GameCard(
+                    icon = {
+                        Image(
+                            painter = painterResource(R.drawable.sj_icon),
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.height(62.dp)
+                        )
+                    },
+                    title = "升级 · 拖拉机",
+                    badge = "新上架",
+                    badgeColor = Color(0xFF1565C0),
+                    desc = "80分 · 抠底翻倍 · 拖拉机 · A必打",
+                    onClick = onPlayShengji
+                )
                 // 敬请期待
                 Row(
                     Modifier
@@ -159,7 +207,7 @@ fun CollectionScreen(
                             color = Color(0xB3FFFFFF)
                         )
                         Text(
-                            "掼蛋 / 升级 / 锄大地……老家牌桌上慢慢添",
+                            "斗地主 / 跑得快 / 锄大地 / 掼蛋 / 升级，已集齐！",
                             fontSize = 10.sp, color = Color(0x80FFFFFF)
                         )
                     }

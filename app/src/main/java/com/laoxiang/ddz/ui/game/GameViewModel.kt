@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
 
 /** 游戏模式 */
@@ -66,6 +67,11 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 一次性特效/音效事件流 */
     val fx = MutableSharedFlow<Fx>(extraBufferCapacity = 64)
+
+    /** 联机操作提示（网络不稳/无响应时给用户明确反馈，避免“点了没反应”） */
+    val opNotice = MutableStateFlow<String?>(null)
+
+    fun clearOpNotice() { opNotice.value = null }
 
     /** 聊天气泡 */
     val chatBubbles = MutableStateFlow<List<ChatBubble>>(emptyList())
@@ -366,6 +372,49 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
         scanner = null
     }
 
+    // ================================================= 联机操作可靠性（客户端）
+
+    /** 叫/抢操作是否已生效：阶段、游标、倍数或局号任一前进 */
+    private fun bidEchoChanged(before: GameSnapshot, s: GameSnapshot): Boolean =
+        s.phase != before.phase || s.bidCursor != before.bidCursor ||
+                s.robCursor != before.robCursor || s.robCount != before.robCount ||
+                s.round != before.round
+
+    /** 出牌/过牌是否已生效：阶段、回合、最近出牌者、局号或任一家手牌数变化 */
+    private fun playEchoChanged(before: GameSnapshot, s: GameSnapshot): Boolean =
+        s.phase != before.phase || s.turn != before.turn ||
+                s.lastMoveSeat != before.lastMoveSeat || s.round != before.round ||
+                s.seats.any { sv ->
+                    before.seats.firstOrNull { it.seat == sv.seat }?.handCount != sv.handCount
+                }
+
+    /**
+     * 客户端操作回声监测：发送后等待房主回发快照；
+     * 2.5s 无响应自动重发一次（引擎幂等，非法操作会被房主拒绝，无副作用），
+     * 仍无响应则给出明确提示——彻底解决“轮到抢地主点不动”的偶发丢包/时序问题。
+     */
+    private fun awaitClientEcho(
+        what: String,
+        before: GameSnapshot,
+        changed: (GameSnapshot, GameSnapshot) -> Boolean,
+        resend: () -> Unit
+    ) {
+        if (mode.value != GameMode.CLIENT) return
+        viewModelScope.launch {
+            val first = withTimeoutOrNull(2500) {
+                snapshot.first { s -> s != null && changed(before, s) }
+            }
+            if (first != null) return@launch
+            resend()
+            val second = withTimeoutOrNull(2200) {
+                snapshot.first { s -> s != null && changed(before, s) }
+            }
+            if (second == null) {
+                opNotice.value = "网络不稳定，$what 没有送达，请稍候再试"
+            }
+        }
+    }
+
     // ================================================= 通用操作（本地玩家）
 
     fun toggleSelect(cardId: Int) {
@@ -419,7 +468,10 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
                 clearSelection()
             }
             GameMode.CLIENT -> {
-                client?.play(ids.toList())
+                val c = client ?: return "连接已断开，请重新加入牌局"
+                val ids = ids.toList()
+                c.play(ids)
+                awaitClientEcho("出牌", snap, ::playEchoChanged) { c.play(ids) }
                 clearSelection()
             }
         }
@@ -441,7 +493,11 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
                 pumpSingleAi()
             }
             GameMode.HOST -> host?.hostPass()
-            GameMode.CLIENT -> client?.pass()
+            GameMode.CLIENT -> {
+                val c = client ?: return "连接已断开，请重新加入牌局"
+                c.pass()
+                awaitClientEcho("不出", snap, ::playEchoChanged) { c.pass() }
+            }
         }
         clearSelection()
         return null
@@ -463,7 +519,11 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
                 pumpSingleAi()
             }
             GameMode.HOST -> host?.hostBid(yes)
-            GameMode.CLIENT -> client?.bid(yes)
+            GameMode.CLIENT -> {
+                val c = client ?: return "连接已断开，请重新加入牌局"
+                c.bid(yes)
+                awaitClientEcho(if (yes) "叫抢" else "不叫/不抢", snap, ::bidEchoChanged) { c.bid(yes) }
+            }
         }
         return null
     }
