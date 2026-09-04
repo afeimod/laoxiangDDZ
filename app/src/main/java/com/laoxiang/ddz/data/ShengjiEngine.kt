@@ -10,8 +10,9 @@ import kotlin.random.Random
  *   抢主优先级 对大王(无主) > 对小王(无主) > 对级牌 > 单张级牌；后亮者须严格更高才反主
  * · 主牌 = 双王(4) + 级牌(8) [+ 主花色(24)]；主牌序：主花色2..A(跳级牌)<副级牌<主级牌<小王<大王
  * · 牌型：单张 / 对子 / 拖拉机（同花色或主牌的相邻连续对子，≥2 对）
- * · 跟牌（v17 修正）：领出副牌时，有该花色（非主牌）必须跟足张数；无该花色可任意垫/主杀；
- *   领出主牌时，有主必须跟主。级牌属主牌，不算领出花色的跟牌（修主杀被误禁）
+ * · 跟牌（v20 结构化跟牌）：领出副牌时，有该花色（非主牌）必须跟足张数；无该花色可任意垫/主杀；
+ *   领出主牌时，有主必须跟主。领出对子有对必须跟对（可从三张/四张拆对）；领出拖拉机有同长
+ *   拖拉机必须跟拖拉机，无拖拉机必须跟出全部对子再补散单（对标升级竞赛规则）
  * · 扣底（v17 新增阶段）：定主后庄家捡起 8 张底牌（手牌 33），由庄家手动扣回 8 张后开局
  * · 一圈最大：杀过副；主牌比序；同点先出为大；最大方收圈
  * · 分牌：5=5分、10=10分、K=10分（每副共 200 分）；闲家收分
@@ -119,6 +120,9 @@ data class SjSnapshot(
     val lastPlay: SjPlay?,
     /** 本圈各家出的牌（含已出） */
     val trickPlays: List<Pair<Int, List<Card>>>,
+    /** 刚收圈的上一圈（保留展示，直到下一圈领出才清空；修第四家出牌看不见就跳过） */
+    val lastTrick: List<Pair<Int, List<Card>>> = emptyList(),
+    val lastTrickWinner: Int = -1,
     /** 闲家已得分 */
     val oppPoints: Int,
     val seats: List<SjSeatView>,
@@ -158,6 +162,11 @@ class ShengjiEngine(private val randomSeed: Long? = null) {
 
     /** 本圈各家出的牌 */
     val trickPlays = ArrayList<Pair<Int, List<Card>>>()
+    /** 刚结算的上一圈（保留供 UI 展示；下一圈第一手牌打出时清空） */
+    var lastTrick: List<Pair<Int, List<Card>>> = emptyList()
+        private set
+    var lastTrickWinner = -1
+        private set
     private var trickLeader = -1
     private var trickLed: SjPlay? = null
     private var trickLedSuit = CardSuit.SPADE
@@ -235,7 +244,9 @@ class ShengjiEngine(private val randomSeed: Long? = null) {
             phase = phase, handNo = handNo, levelRank = levelRank, trumpSuit = tr,
             dealer = dealer, teamLevels = teamLevels.toMap(), turn = currentTurn,
             lastPlaySeat = lastPlaySeat, lastPlay = lastPlay,
-            trickPlays = trickPlays.toList(), oppPoints = oppPoints,
+            trickPlays = trickPlays.toList(),
+            lastTrick = lastTrick, lastTrickWinner = lastTrickWinner,
+            oppPoints = oppPoints,
             seats = views, result = result,
             claimSeat = claimSeat, claimSuit = claimedTrump, claimNT = claimNT, claimTier = claimTier,
             kitty = if (phase == Phase.BURYING) kitty else emptyList()
@@ -265,6 +276,7 @@ class ShengjiEngine(private val randomSeed: Long? = null) {
             p.lastActionType = LastActionType.NONE; p.played.clear()
         }
         trickPlays.clear(); trickLeader = -1
+        lastTrick = emptyList(); lastTrickWinner = -1
         lastPlay = null; lastPlaySeat = -1
         oppPoints = 0
         result = null
@@ -431,18 +443,13 @@ class ShengjiEngine(private val randomSeed: Long? = null) {
         val led = trickLed ?: return p
         // 数量必须等于领出数量
         if (p.count != led.count) return null
-        // 跟牌约束（v17 修正）：
-        // · 领出副牌 → 手中有该花色非主牌必须跟足（级牌属主牌，不算该花色）；
-        //   无该花色/不足时可任意垫牌或用主牌杀
+        // 跟牌约束（v20 结构化跟牌，对标升级竞赛规则）：
+        // · 领出副牌 → 手中有该花色非主牌必须跟足张数（级牌属主牌，不算该花色）；
+        //   无该花色/不足时可垫牌或用主牌杀
         // · 领出主牌 → 有主必须跟主
-        val ledSuit = trickLedSuit
-        fun isFollow(c: Card): Boolean =
-            if (ledSuit == CardSuit.JOKER) SjRules.isTrump(c, trumpSuit, levelRank)
-            else c.suit == ledSuit && !SjRules.isTrump(c, trumpSuit, levelRank)
-        val inSuit = hand.count { isFollow(it) }
-        val need = minOf(led.count, inSuit)
-        val used = cards.count { isFollow(it) }
-        if (used < need) return null
+        // · 领出对子 → 手中有该花色对子必须跟对（可从三张/四张中拆对），无对才可跟散单
+        // · 领出拖拉机 → 有同长拖拉机必须跟拖拉机；无拖拉机必须跟出全部对子（至多 k 对）再补散单
+        if (!followStructureOk(led, hand, cards, trumpSuit, levelRank)) return null
         return p
     }
 
@@ -455,6 +462,8 @@ class ShengjiEngine(private val randomSeed: Long? = null) {
         players[s].lastActionType = LastActionType.PLAYED
 
         if (trickLed == null) {
+            // 新一圈领出：上一圈的保留展示到此为止
+            lastTrick = emptyList(); lastTrickWinner = -1
             trickLed = p
             trickLedSuit = p.suit
             trickUnit = p.unit
@@ -498,6 +507,9 @@ class ShengjiEngine(private val randomSeed: Long? = null) {
         }
         events += SjEvent.TrickWon(bestSeat, if (gdTeamOf(bestSeat) == oppTeam()) pts else 0)
 
+        // 保留整圈牌面供展示（第四家出牌也能看见），下一圈领出时清空
+        lastTrick = trickPlays.toList()
+        lastTrickWinner = bestSeat
         trickPlays.clear()
         trickLed = null
         players.forEach {
@@ -549,10 +561,10 @@ class ShengjiEngine(private val randomSeed: Long? = null) {
         return best
     }
 
-    /** 单张能否争圈：(是否主, 序, 花色权重)；副牌须为领出花色 */
+    /** 单张能否争圈：(是否主, 序, 花色权重)；主牌同序不分花色（先出为大，v19）；副牌须为领出花色 */
     private fun cardWinKey(c: Card, ledSuit: CardSuit, t: CardSuit, lr: Int): Triple<Int, Int, Int>? {
         return when {
-            SjRules.isTrump(c, t, lr) -> Triple(1, SjRules.trumpIndex(c, t, lr), SjRules.suitRank(c.suit))
+            SjRules.isTrump(c, t, lr) -> Triple(1, SjRules.trumpIndex(c, t, lr), 0)
             c.suit == ledSuit -> Triple(0, c.rank, SjRules.suitRank(c.suit))
             else -> null
         }
@@ -577,16 +589,17 @@ class ShengjiEngine(private val randomSeed: Long? = null) {
                     out += groupKeyOf(isTrumpGroup, rankKey.first, rankKey.second)
                 }
             } else {
-                tractorsOf(pairs).forEach { tract ->
-                    out += groupKeyOf(isTrumpGroup, tract.second, tract.third)
+                tractorsOf(pairs, isTrumpGroup).forEach { tract ->
+                    out += groupKeyOf(isTrumpGroup, tract.first, tract.third)
                 }
             }
         }
         return out
     }
 
+    /** 争圈键：主牌组花色权重归零（同序先出为大，v19 修副级对互压误判） */
     private fun groupKeyOf(isTrumpGroup: Boolean, idx: Int, sRank: Int): Triple<Int, Int, Int> =
-        Triple(if (isTrumpGroup) 1 else 0, idx, sRank)
+        Triple(if (isTrumpGroup) 1 else 0, idx, if (isTrumpGroup) 0 else sRank)
 
     /** 收集对子：键=(序, 花色权重) → 张数 */
     private fun collectPairs(cs: List<Card>): Map<Pair<Int, Int>, List<Card>> {
@@ -604,21 +617,21 @@ class ShengjiEngine(private val randomSeed: Long? = null) {
         return groups.filterValues { it.size >= 2 }
     }
 
-    /** 从对子集合找拖拉机（同花色相邻），返回列表（最大对序, 对数） */
-    private fun tractorsOf(pairs: Map<Pair<Int, Int>, List<Card>>): List<Triple<Int, Int, Int>> {
+    /** 从对子集合找拖拉机（v19：全键排序 + sjAdjacent 邻接，含主牌跨花色连档特例），返回 (顶序, 对数, 花色权) */
+    private fun tractorsOf(
+        pairs: Map<Pair<Int, Int>, List<Card>>,
+        isTrumpGroup: Boolean
+    ): List<Triple<Int, Int, Int>> {
         val out = ArrayList<Triple<Int, Int, Int>>()
-        pairs.entries.groupBy { it.key.second }   // 按花色权重分组
-            .forEach { (_, entries) ->
-                val sorted = entries.map { it.key.first }.sorted()
-                var run = 1
-                for (i in 1 until sorted.size) {
-                    if (sorted[i] == sorted[i - 1] + 1) run++ else {
-                        if (run >= 2) out += Triple(sorted[i - 1], run, entries.first().key.second)
-                        run = 1
-                    }
-                }
-                if (run >= 2) out += Triple(sorted.last(), run, entries.first().key.second)
+        val keys = pairs.keys.sortedWith(compareBy({ it.first }, { it.second }))
+        var start = 0
+        for (i in 0 until keys.size) {
+            if (i == keys.size - 1 || !sjAdjacent(keys[i], keys[i + 1], isTrumpGroup)) {
+                val len = i - start + 1
+                if (len >= 2) out += Triple(keys[i].first, len, keys[i].second)
+                start = i + 1
             }
+        }
         return out
     }
 
@@ -670,8 +683,85 @@ class ShengjiEngine(private val randomSeed: Long? = null) {
 // ------------------------------------------------ 牌型解析（顶层，供引擎/AI/测试共用）
 
 /**
+ * v20 结构化跟牌校验（对标升级竞赛规则，引擎 validatePlay / AI / 提示共用口径）：
+ * · 张数约束：有领出花色（领出主牌=全部主牌）须跟足 min(领出张数, 持有张数)
+ * · 领出对子（含甩牌内含对 unit==2）：手中该花色有对（同键两张）必须跟对，
+ *   可从三张/四张中拆对；无对才可跟散单
+ * · 领出拖拉机（含甩牌内含拖拉机 unit>=3）：有同长（k 对）拖拉机必须跟拖拉机；
+ *   无同长拖拉机必须跟出全部对子中 min(k, 总对数) 个，剩余张数补散单
+ * · 无该花色（垫/杀）或持有张数不足领出张数时，仅约束张数
+ */
+fun followStructureOk(
+    led: SjPlay,
+    hand: List<Card>,
+    cards: List<Card>,
+    t: CardSuit,
+    lr: Int
+): Boolean {
+    fun inPool(c: Card): Boolean =
+        if (led.suit == CardSuit.JOKER) SjRules.isTrump(c, t, lr)
+        else c.suit == led.suit && !SjRules.isTrump(c, t, lr)
+    val pool = hand.filter { inPool(it) }
+    val used = cards.filter { inPool(it) }
+    // 张数约束（v17 语义保留）
+    if (used.size < minOf(led.count, pool.size)) return false
+    // 垫/杀或不足跟：只约束张数
+    if (pool.size < led.count) return true
+
+    val shape: SjType = when (led.type) {
+        SjType.PAIR -> SjType.PAIR
+        SjType.TRACTOR -> SjType.TRACTOR
+        SjType.THROW -> when {
+            led.unit >= 3 -> SjType.TRACTOR
+            led.unit == 2 -> SjType.PAIR
+            else -> return true
+        }
+        SjType.SINGLE -> return true
+    }
+    val usedKeys = used.groupBy { sjComboKey(it, t, lr) }
+    val isTrumpLed = led.suit == CardSuit.JOKER
+    return when (shape) {
+        SjType.PAIR -> {
+            // 有对必须跟对：所出牌中须含完整对子（同键两张）
+            val handHasPair = pool.groupBy { sjComboKey(it, t, lr) }.any { it.value.size >= 2 }
+            !handHasPair || usedKeys.any { it.value.size >= 2 }
+        }
+        else -> {
+            // 拖拉机：k 对
+            val k = led.count / 2
+            val pairGroups = pool.groupBy { sjComboKey(it, t, lr) }.filterValues { it.size >= 2 }
+            val totalPairs = pairGroups.values.sumOf { it.size / 2 }
+            val maxRun = sjLongestRun(pairGroups.keys, isTrumpLed)
+            val usedPairKeys = usedKeys.filterValues { it.size >= 2 }
+            val usedPairs = usedPairKeys.values.sumOf { it.size / 2 }
+            val usedIsTractor = used.size == led.count && usedPairKeys.size == k && usedPairs == k &&
+                    sjLongestRun(usedPairKeys.keys, isTrumpLed) >= k
+            if (maxRun >= k) usedIsTractor
+            else usedPairs >= minOf(k, totalPairs)
+        }
+    }
+}
+
+/** 连对键最长连续段长（sjAdjacent 邻接；副牌组只认同花色相邻，主牌组含级牌↔王连档特例） */
+fun sjLongestRun(keys: Collection<Pair<Int, Int>>, isTrumpGroup: Boolean): Int {
+    if (keys.isEmpty()) return 0
+    val ks = keys.sortedWith(compareBy({ it.first }, { it.second }))
+    var best = 1
+    var run = 1
+    for (i in 1 until ks.size) {
+        run = if (sjAdjacent(ks[i - 1], ks[i], isTrumpGroup)) run + 1 else 1
+        if (run > best) best = run
+    }
+    return best
+}
+
+/**
  * 解析一手牌：领出必须同花色或全主牌；跟牌（allowMixed=true）允许任意混合垫牌。
  * 返回 SjPlay；不合法返回 null。主牌 suit=JOKER 作哨兵。
+ * v19 修正：
+ * · 对子/拖拉机按「点数+花色」成组 —— 不同花色的级牌（如 2♠2♦）不再被误判成一对（修「四个2」假拖拉机）
+ * · 拖拉机邻接：同花色相邻序；特例 级牌对(15/16)↔小王对(17)、副级对(15)↔主级对(16) 跨花色相连
+ * · 领出甩牌必须同花色；王与级牌无花色不可参与甩牌（杜绝四个2这类混甩领出）
  */
 fun parsePlay(cards: List<Card>, t: CardSuit, lr: Int, allowMixed: Boolean = false): SjPlay? {
     if (cards.isEmpty()) return null
@@ -694,49 +784,90 @@ fun parsePlay(cards: List<Card>, t: CardSuit, lr: Int, allowMixed: Boolean = fal
             val pw = if (allTrump) SjRules.trumpIndex(a, t, lr) else a.rank
             return SjPlay(cards, SjType.PAIR, effSuit, 1, pw)
         }
-        // 非对子：两张同花散牌或任意混合 → 垫牌 THROW（不能单独争圈）
+        // 非对子：领出须同花色（王/级牌无花色不可甩）
+        if (!allowMixed) {
+            val first = cards[0].suit
+            if (first == CardSuit.JOKER || cards.any { it.suit != first }) return null
+        }
+        // 两张同花散牌或任意混合 → 垫牌 THROW（不能单独争圈）
         val (unit, pw) = biggestGroup(cards, t, lr)
         return SjPlay(cards, SjType.THROW, effSuit, unit, pw)
     }
-    // 拖拉机：偶数张，成对且相邻（主牌按 trumpIndex，副牌按 rank）
+    // 拖拉机：全同花色或全主牌、偶数张、全部成对且相邻（v19 花色感知）
     if (cards.size % 2 == 0) {
-        val byKey = if (allTrump) {
-            cards.groupBy { SjRules.trumpIndex(it, t, lr) }
-        } else {
-            cards.groupBy { it.rank }
-        }
-        if (byKey.values.all { it.size == 2 }) {
-            val keys = byKey.keys.sorted()
-            if (keys.zipWithNext().all { (a, b) -> b - a == 1 }) {
-                return SjPlay(cards, SjType.TRACTOR, effSuit, keys.size, keys.last())
+        val groups = cards.groupBy { sjComboKey(it, t, lr) }
+        if (groups.values.all { it.size == 2 }) {
+            val keys = groups.keys.sortedWith(compareBy({ it.first }, { it.second }))
+            if (keys.zipWithNext().all { (a, b) -> sjAdjacent(a, b) }) {
+                return SjPlay(cards, SjType.TRACTOR, effSuit, keys.size, keys.last().first)
             }
         }
     }
-    // 组合（垫/甩）：同花色/全主或任意混合，记录内含最大同型组作为争圈目标
+    // 组合（垫/甩）：领出必须同花色（王与级牌无花色不可甩；修「四个2」混甩领出）
+    if (!allowMixed) {
+        val first = cards[0].suit
+        if (first == CardSuit.JOKER || cards.any { it.suit != first }) return null
+    }
     val (unit, pw) = biggestGroup(cards, t, lr)
     return SjPlay(cards, SjType.THROW, effSuit, unit, pw)
 }
 
 /**
+ * 组合分组键：同键才可能成对/连拖拉机。
+ * 主牌 = (trumpIndex, 花色权) —— 级牌保留原花色，2♠与2♦ 不同键（不成对）；
+ * 副牌 = (点数, 花色权)。
+ */
+fun sjComboKey(c: Card, t: CardSuit, lr: Int): Pair<Int, Int> =
+    if (SjRules.isTrump(c, t, lr)) Pair(SjRules.trumpIndex(c, t, lr), SjRules.suitRank(c.suit))
+    else Pair(c.rank, SjRules.suitRank(c.suit))
+
+/**
+ * 两个对子键是否相邻可连拖拉机：
+ * · 同花色且序数差 1；
+ * · 主牌组特例（跨花色连档，仅主牌内部）：主A(14)↔副级(15)↔主级(16)↔小王(17)
+ *   （副牌组传 isTrumpGroup=false，只认同花色相邻）
+ */
+fun sjAdjacent(a: Pair<Int, Int>, b: Pair<Int, Int>, isTrumpGroup: Boolean = true): Boolean {
+    val lo = minOf(a.first, b.first)
+    val hi = maxOf(a.first, b.first)
+    if (hi - lo != 1) return false
+    if (a.second == b.second) return true
+    if (!isTrumpGroup) return false
+    return lo >= 14 && hi <= 17
+}
+
+/**
  * 组合内最大同型组（争圈目标编码）：
  * 单张→unit=1；对子→unit=2；k 对拖拉机→unit=2+k（≥3）
+ * v19 花色感知：主牌/副牌分开评估，同键（点数+花色）才成组，邻接含级牌↔对王特例
  */
 fun biggestGroup(cards: List<Card>, t: CardSuit, lr: Int): Pair<Int, Int> {
-    val allTrump = cards.all { SjRules.isTrump(it, t, lr) }
-    val byKey = if (allTrump) cards.groupBy { SjRules.trumpIndex(it, t, lr) }
-    else cards.groupBy { it.rank }
-    val pairRanks = byKey.filterValues { it.size >= 2 }.keys.sorted()
-    var bestStart = -1; var bestLen = 1
-    var run = 1
-    for (i in 1 until pairRanks.size) {
-        run = if (pairRanks[i] == pairRanks[i - 1] + 1) run + 1 else 1
-        if (run > bestLen) { bestLen = run; bestStart = i - run + 1 }
+    val trumpCs = cards.filter { SjRules.isTrump(it, t, lr) }
+    val sideCs = cards.filter { !SjRules.isTrump(it, t, lr) }
+    var unit = 1
+    var pw = cards.maxOf { if (SjRules.isTrump(it, t, lr)) SjRules.trumpIndex(it, t, lr) else it.rank }
+    listOf(trumpCs to true, sideCs to false).forEach { (cs, isTrumpGroup) ->
+        if (cs.size < 2) return@forEach
+        val byKey = cs.groupBy { sjComboKey(it, t, lr) }
+        val pairKeys = byKey.filterValues { it.size >= 2 }.keys.sortedWith(compareBy({ it.first }, { it.second }))
+        if (pairKeys.isEmpty()) return@forEach
+        // 最长相邻 run
+        var bestLen = 1
+        var bestTop = pairKeys[0]
+        var run = 1
+        for (i in 1 until pairKeys.size) {
+            run = if (sjAdjacent(pairKeys[i - 1], pairKeys[i], isTrumpGroup)) run + 1 else 1
+            if (run > bestLen || (run == bestLen && pairKeys[i].first > bestTop.first)) {
+                bestLen = run; bestTop = pairKeys[i]
+            }
+        }
+        if (bestLen >= 2) {
+            val u = 2 + bestLen
+            if (u > unit || (u == unit && bestTop.first > pw)) { unit = u; pw = bestTop.first }
+        } else {
+            val top = pairKeys.last()
+            if (2 > unit || (2 == unit && top.first > pw)) { unit = 2; pw = top.first }
+        }
     }
-    if (bestLen >= 2) {
-        val top = pairRanks[bestStart + bestLen - 1]
-        return ((2 + bestLen) to top)
-    }
-    if (pairRanks.isNotEmpty()) return (2 to pairRanks.last())
-    val maxPw = cards.maxOf { if (allTrump) SjRules.trumpIndex(it, t, lr) else it.rank }
-    return (1 to maxPw)
+    return unit to pw
 }

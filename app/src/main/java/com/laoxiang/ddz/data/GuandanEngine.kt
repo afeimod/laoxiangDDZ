@@ -13,8 +13,11 @@ import kotlin.random.Random
  *        /炸弹(≥4同点,张数多者大)/同花顺(压≤5张炸弹)/天王炸(4王,最大)
  * · 首副随机先出；此后头游先出。V1 无进贡还贡
  * · 同型同量比大小；炸弹压一切非炸；全部自由过牌
- * · 三家全过→最后出牌者领出；其若已出完→对家接风领出
- * · 名次：头游/二游/三游/末游。头游方升级：双下(头游二游同队)+3，头游+三游同队+2，+1
+ * · 判圈（v21 修正）：一圈内过牌只表示不压当前这手牌，他人出更大的牌后过牌者会被再次询问；
+ *   最后出牌之后其余各家均过牌（即出牌轮转回到最后出牌者）该圈才结束，由其领出下一圈；
+ *   其若已出完→对家接风领出
+ * · 名次：头游/二游/三游/末游。头游方升级：双下(头游二游同队)立即结算+3；非双下打出三游：
+ *   三游与头游同队+2，异队+1（v20 修正：此前二游出现即提前结算且一律+1）
  * · 任一队打到 A 且赢一副 → 终局
  */
 enum class GdTeam { A, B }
@@ -254,9 +257,8 @@ class GuandanEngine(private val randomSeed: Long? = null) {
         private set
     var lastMoveSeat = -1
         private set
-    private var passStreak = 0
     private var trickLeader = -1          // 本圈领出者
-    private var trickLastSeat = -1        // 本圈最后出牌者
+    private var trickLastSeat = -1        // 本圈最后出牌者（判圈基准：轮转回到此人且中途无人出牌→收圈）
 
     val teamLevels = mutableMapOf(GdTeam.A to 2, GdTeam.B to 2)
     var levelRank = 2
@@ -342,7 +344,7 @@ class GuandanEngine(private val randomSeed: Long? = null) {
         }
         finishOrder.clear()
         lastMove = null; lastMoveSeat = -1
-        passStreak = 0; trickLeader = -1; trickLastSeat = -1
+        trickLeader = -1; trickLastSeat = -1
         result = null
         events.clear()
 
@@ -372,7 +374,6 @@ class GuandanEngine(private val randomSeed: Long? = null) {
         lastMove = move
         lastMoveSeat = s
         trickLastSeat = s
-        passStreak = 0
         events += GdEvent.Played(s, move)
         when {
             move.type == GdType.ROCKET -> events += GdEvent.Bomb(s, rocket = true, straightFlush = false)
@@ -382,12 +383,17 @@ class GuandanEngine(private val randomSeed: Long? = null) {
 
         if (hand.isEmpty()) {
             finishOrder += s
-            if (finishOrder.size >= 2) {
+            // 掼蛋竞赛规则：双下（头游二游同队）立即结算升 3 级；
+            // 否则须继续打出三游：三游与头游同队升 2 级，异队升 1 级（修非双下提前结算）
+            val doubleDown = finishOrder.size >= 2 &&
+                    gdTeamOf(finishOrder[1]) == gdTeamOf(finishOrder[0])
+            val done = doubleDown || finishOrder.size >= 3
+            if (done) {
                 endHand()
                 return true
             }
         }
-        advanceTurn()
+        advanceAfterAction(s)
         return true
     }
 
@@ -397,35 +403,40 @@ class GuandanEngine(private val randomSeed: Long? = null) {
         players[s].lastPlayed = emptyList()
         players[s].lastActionType = LastActionType.PASSED
         events += GdEvent.Pass(s)
-        passStreak++
-        if (passStreak >= 3) {
-            // 一圈结束：领出权归最后出牌者（若已出完 → 对家接风）
-            var leader = trickLastSeat
-            if (players[leader].hand.isEmpty()) leader = gdPartner(leader)   // 接风
-            if (players[leader].hand.isEmpty()) {
-                // 接风对象也已出完（理论不可达，防御）→ 找下一个活人
-                leader = (0..3).firstOrNull { players[it].hand.isNotEmpty() } ?: leader
-            }
-            currentTurn = leader
-            trickLeader = leader
-            lastMove = null
-            lastMoveSeat = -1
-            passStreak = 0
-            players.forEach { if (it.info.seat != leader) { it.lastPlayed = emptyList(); it.lastActionType = LastActionType.NONE } }
-            events += GdEvent.NewRound(leader)
-        } else {
-            advanceTurn()
-        }
+        advanceAfterAction(s)
         return true
     }
 
-    private fun advanceTurn() {
-        var next = currentTurn
+    /**
+     * 每次出牌/过牌后的流转：从行动者起顺时针逐座检查。
+     * · 先碰到本圈最后出牌者的座位（无论其是否已出完）→ 其余各家均已过牌，本圈结束
+     * · 否则碰到第一位有牌者 → 轮到其行动（此前过过的牌也会被再次询问）
+     * 注意不能"跳过空手找有牌者"再比较：最后出牌者若已出完，其空座被跳过会导致圈永远收不掉。
+     */
+    private fun advanceAfterAction(actor: Int) {
+        var next = actor
         repeat(4) {
             next = (next + 1) % 4
+            if (next == trickLastSeat) { endTrickAdvance(); return }
             if (players[next].hand.isNotEmpty()) { currentTurn = next; return }
         }
-        // 全出完（理论不可达：二游出完即结束）
+        endTrickAdvance()   // 防御：理论不可达（4 步内必经过 trickLastSeat）
+    }
+
+    /** 圈结束：领出权归最后出牌者（若已出完 → 对家接风） */
+    private fun endTrickAdvance() {
+        var leader = trickLastSeat
+        if (players[leader].hand.isEmpty()) leader = gdPartner(leader)   // 接风
+        if (players[leader].hand.isEmpty()) {
+            // 接风对象也已出完（理论不可达，防御）→ 找下一个活人
+            leader = (0..3).firstOrNull { players[it].hand.isNotEmpty() } ?: leader
+        }
+        currentTurn = leader
+        trickLeader = leader
+        lastMove = null
+        lastMoveSeat = -1
+        players.forEach { if (it.info.seat != leader) { it.lastPlayed = emptyList(); it.lastActionType = LastActionType.NONE } }
+        events += GdEvent.NewRound(leader)
     }
 
     private fun endHand() {
