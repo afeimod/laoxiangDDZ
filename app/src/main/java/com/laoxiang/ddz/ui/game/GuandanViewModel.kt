@@ -28,6 +28,10 @@ class GuandanViewModel(app: Application) : AndroidViewModel(app) {
     private val engine = GuandanEngine()
     private var hintIndex = -1
 
+    /** AI 泵链代数：开局/下一副时作废旧残留的思考协程（VM 为 Activity 级单例，
+     *  中途退出重进后旧协程若仅靠 turn==actor 守卫可能在新一副里瞬间乱出牌） */
+    private var pumpEpoch = 0
+
     fun start() {
         selected.value = emptySet()
         hintIndex = -1
@@ -41,6 +45,7 @@ class GuandanViewModel(app: Application) : AndroidViewModel(app) {
         engine.newMatch(infos)
         publish(effects = true)
         sound.startBgm()
+        pumpEpoch++
         pumpAi()
     }
 
@@ -50,6 +55,7 @@ class GuandanViewModel(app: Application) : AndroidViewModel(app) {
         hintIndex = -1
         if (engine.nextHandIfPossible()) {
             publish(effects = true)
+            pumpEpoch++
             pumpAi()
         }
     }
@@ -107,8 +113,10 @@ class GuandanViewModel(app: Application) : AndroidViewModel(app) {
             AiLevel.EASY -> 700; AiLevel.HARD -> 1200; else -> 950
         }) + Random.nextLong(450)
 
+        val epoch = pumpEpoch
         viewModelScope.launch {
             delay(think)
+            if (epoch != pumpEpoch) return@launch
             if (engine.phase != Phase.PLAYING || engine.currentTurn != actor) return@launch
             engine.events.clear()
             var acted = false

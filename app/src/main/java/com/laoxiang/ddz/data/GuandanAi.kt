@@ -113,7 +113,10 @@ class GuandanAi(private val seat: Int, private val level: AiLevel, private val l
     }
 
     companion object {
-        /** 枚举能压过 [last] 的组合；withBomb=false 只找同型普通牌 */
+        /** 枚举能压过 [last] 的组合；withBomb=false 只找同型普通牌。
+         *  v19：支持逢人配（红桃级牌）替换——此前百搭只能按自身点数参与，
+         *  「3 同张+逢人配=炸弹」「单张+逢人配=对子」「百搭补顺」等全被漏掉，
+         *  AI 明明能压却 pass（观感即"下家有大的牌却不压，牌局立刻继续"）。 */
         fun genGdBeats(
             hand: List<Card>,
             last: GdMove,
@@ -170,8 +173,10 @@ class GuandanAi(private val seat: Int, private val level: AiLevel, private val l
             }
             if (last.type.isBombLike) {
                 // 只能找炸弹/同花顺/天王炸压炸弹
-            } else if (!withBomb || true) {
+            } else {
                 addSameType()
+                // 逢人配替换的普通型（对子/三张/三带二/顺子/木板/钢板）
+                out += genWildBeats(hand, last, levelRank)
             }
             // 炸弹
             if (withBomb || last.type.isBombLike) {
@@ -189,6 +194,8 @@ class GuandanAi(private val seat: Int, private val level: AiLevel, private val l
                         }
                     }
                 }
+                // 逢人配补炸弹（3 同张+百搭、2 同张+双百搭…）
+                out += genWildBombs(hand, last, levelRank)
                 // 同花顺
                 genStraightFlushes(hand, levelRank).forEach { sf ->
                     if (GdMove.of(sf, levelRank)!!.beats(last, levelRank)) out += sf
@@ -197,6 +204,107 @@ class GuandanAi(private val seat: Int, private val level: AiLevel, private val l
                 if (jokers.size == 4) out += jokers
             }
             return out.distinctBy { it.map { c -> c.id } }
+        }
+
+        /** 逢人配替换的普通型压牌（v19）：百搭可代任意非王点数补全组合。
+         *  候选一律与上家同张数，最终用 GdMove.of + beats 校验合法性。 */
+        private fun genWildBeats(hand: List<Card>, last: GdMove, levelRank: Int): List<List<Card>> {
+            val wilds = hand.filter { GdMove.isFengrenpei(it, levelRank) }
+            if (wilds.isEmpty()) return emptyList()
+            val out = ArrayList<List<Card>>()
+            val real = hand.filter { it.suit != CardSuit.JOKER && !GdMove.isFengrenpei(it, levelRank) }
+            val byRank = real.groupBy { it.rank }
+            fun pw(r: Int) = GdRules.power(r, levelRank)
+            fun put(cards: List<Card>) {
+                if (cards.size != last.cards.size) return
+                val mv = GdMove.of(cards, levelRank) ?: return
+                if (mv.beats(last, levelRank)) out += cards
+            }
+            when (last.type) {
+                GdType.PAIR -> byRank.forEach { (r, cs) ->
+                    if (pw(r) > last.mainPower) put(listOf(cs.first(), wilds[0]))
+                }
+                GdType.TRIO -> byRank.forEach { (r, cs) ->
+                    if (pw(r) <= last.mainPower) return@forEach
+                    if (cs.size == 2) put(listOf(cs[0], cs[1], wilds[0]))
+                    if (cs.size == 1 && wilds.size >= 2) put(listOf(cs[0], wilds[0], wilds[1]))
+                }
+                GdType.TRIO_PAIR -> {
+                    // 三张部分（含百搭）× 对子部分（含百搭），百搭数合计 ≤ wilds.size
+                    data class TrioPart(val cards: List<Card>, val w: Int, val r: Int)
+                    data class PairPart(val cards: List<Card>, val w: Int, val r: Int)
+                    val trios = ArrayList<TrioPart>()
+                    val pairs = ArrayList<PairPart>()
+                    byRank.forEach { (r, cs) ->
+                        when {
+                            cs.size >= 3 -> trios += TrioPart(cs.take(3), 0, r)
+                            cs.size == 2 -> trios += TrioPart(cs.take(2) + wilds[0], 1, r)
+                            cs.size == 1 && wilds.size >= 2 -> trios += TrioPart(listOf(cs[0], wilds[0], wilds[1]), 2, r)
+                        }
+                        when {
+                            cs.size >= 2 -> pairs += PairPart(cs.take(2), 0, r)
+                            cs.size == 1 -> pairs += PairPart(listOf(cs[0], wilds[0]), 1, r)
+                        }
+                    }
+                    trios.forEach { t ->
+                        pairs.forEach { p ->
+                            if (t.r != p.r && t.w + p.w <= wilds.size) put(t.cards + p.cards)
+                        }
+                    }
+                }
+                GdType.STRAIGHT -> {
+                    fun tryWindow(window: List<Int>, endpoint: Int) {
+                        if (endpoint <= last.mainPower) return
+                        val missing = window.filter { it !in byRank }
+                        if (missing.isEmpty() || missing.size > wilds.size) return
+                        val cards = window.filter { it in byRank }.map { byRank[it]!!.first() } +
+                                wilds.take(missing.size)
+                        put(cards)
+                    }
+                    (2..10).forEach { s -> tryWindow((s..s + 4).toList(), s + 4) }
+                    tryWindow(listOf(2, 3, 4, 5, 14), 5)     // A2345（端点 5）
+                }
+                GdType.BANZI -> (2..12).forEach { s ->
+                    if (s + 2 <= last.mainPower) return@forEach
+                    val window = (s..s + 2).toList()
+                    val deficit = window.sumOf { r -> (2 - (byRank[r]?.size ?: 0)).coerceAtLeast(0) }
+                    if (deficit in 1..wilds.size) {
+                        val cards = window.flatMap { r -> (byRank[r] ?: emptyList()).take(2) } + wilds.take(deficit)
+                        put(cards)
+                    }
+                }
+                GdType.GANGBAN -> (2..13).forEach { s ->
+                    if (s + 1 <= last.mainPower) return@forEach
+                    val window = listOf(s, s + 1)
+                    val deficit = window.sumOf { r -> (3 - (byRank[r]?.size ?: 0)).coerceAtLeast(0) }
+                    if (deficit in 1..wilds.size) {
+                        val cards = window.flatMap { r -> byRank[r]!!.take(3) } + wilds.take(deficit)
+                        put(cards)
+                    }
+                }
+                else -> {}
+            }
+            return out
+        }
+
+        /** 逢人配补炸弹（v19）：3 同张+百搭（4 炸）、2 同张+双百搭、3 同张+双百搭（5 炸）… */
+        private fun genWildBombs(hand: List<Card>, last: GdMove, levelRank: Int): List<List<Card>> {
+            val wilds = hand.filter { GdMove.isFengrenpei(it, levelRank) }
+            if (wilds.isEmpty()) return emptyList()
+            val out = ArrayList<List<Card>>()
+            val real = hand.filter { it.suit != CardSuit.JOKER && !GdMove.isFengrenpei(it, levelRank) }
+            real.groupBy { it.rank }.forEach { (_, cs) ->
+                if (cs.size in 2..3) {
+                    for (extra in 1..wilds.size) {
+                        val total = cs.size + extra
+                        if (total < 4) continue
+                        val cards = cs + wilds.take(extra)
+                        val mv = GdMove.of(cards, levelRank) ?: continue
+                        if (mv.beats(last, levelRank)) out += cards
+                    }
+                }
+            }
+            return out
         }
 
         /** 枚举同花顺（5 张同花连续） */

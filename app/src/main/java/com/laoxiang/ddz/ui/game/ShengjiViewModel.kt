@@ -215,9 +215,7 @@ class ShengjiViewModel(app: Application) : AndroidViewModel(app) {
         val ai = ShengjiAi(actor, player.info.aiLevel ?: AiLevel.MEDIUM)
         val think = (when (player.info.aiLevel) {
             AiLevel.EASY -> 700; AiLevel.HARD -> 1200; else -> 950
-        }) + Random.nextLong(450) +
-                // 刚收完一圈且下一手是 AI 领出：多停 0.75s，让第四家（收圈）的牌被看清
-                (if (engine.ledPlay() == null && engine.lastTrick.isNotEmpty()) 750L else 0L)
+        }) + Random.nextLong(450)
 
         viewModelScope.launch {
             delay(think)
@@ -291,17 +289,12 @@ class ShengjiViewModel(app: Application) : AndroidViewModel(app) {
         engine.events.clear()
         val ok = engine.play(0, cards)
         if (!ok) {
-            val led = engine.ledPlay()
             val trump = snap.trumpSuit
-            return when {
-                led != null && led.count != cards.size ->
-                    "必须出 ${led.count} 张"
-                trump != null && led != null && led.suit == CardSuit.JOKER &&
-                    cards.none { SjRules.isTrump(it, trump, snap.levelRank) } ->
-                    "领出的是主牌，有主须跟主"
-                else ->
-                    "跟牌不合法：有该花色须跟足；领出对子须跟对（可拆三/四张成对）；领出拖拉机须跟拖拉机或全部对子；无该花色可主杀/垫牌"
-            }
+            return if (trump != null && snap.lastPlay != null && snap.lastPlay!!.suit == CardSuit.JOKER &&
+                cards.none { SjRules.isTrump(it, trump, snap.levelRank) })
+                "领出的是主牌，有主须跟主"
+            else
+                "跟牌不合法：有该花色（非主牌）须跟足 ${snap.lastPlay?.count ?: cards.size} 张；无该花色可主杀/垫牌"
         }
         clearSelection()
         publish(effects = true)
@@ -324,8 +317,7 @@ class ShengjiViewModel(app: Application) : AndroidViewModel(app) {
             val pool = if (led.suit == CardSuit.JOKER) hand.filter { SjRules.isTrump(it, t, lr) }
             else hand.filter { it.suit == led.suit && !SjRules.isTrump(it, t, lr) }
             when {
-                // v20 结构化跟牌建议：对跟对、拖拉机跟拖拉机/全部对子（与引擎校验同一口径）
-                pool.size >= led.count -> ShengjiAi.followSuggestion(pool, led, t, lr)
+                pool.size >= led.count -> pool.sortedBy { it.rank }.take(led.count)
                 pool.isEmpty() && led.count == 1 -> {
                     // 无该花色：优先建议最大主杀，否则垫最小牌
                     val trumps = hand.filter { SjRules.isTrump(it, t, lr) }

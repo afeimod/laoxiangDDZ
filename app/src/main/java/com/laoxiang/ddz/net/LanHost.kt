@@ -7,6 +7,7 @@ import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.Executors
@@ -20,6 +21,9 @@ import kotlin.random.Random
  * - 座位 1/2 = 远端真人或 AI 托管
  * - 牌局引擎只在 [gameDispatcher] 单线程上运行；连接表用 [connLock] 保护
  * - 客户端断线自动转 AI 托管，牌局不中断
+ * - v19：每条连接配专职写协程（出站队列），广播/喊话只入队永不阻塞——
+ *   此前在游戏线程上逐个客户端同步写，一个慢/假死的客人会拖住整个牌局；
+ *   主线程的喊话/房间消息同步写同样会在 Android 上被静默丢弃。
  */
 class LanHost(
     private val hostName: String,
@@ -50,7 +54,10 @@ class LanHost(
         val writer: BufferedWriter,
         val name: String,
         val avatar: Int
-    )
+    ) {
+        val outbound = OutboundQueue()
+        var writeJob: Job? = null
+    }
 
     @Volatile
     var aiLevel: Int = 1   // 0简单 1中等 2困难
@@ -81,7 +88,10 @@ class LanHost(
         stop()
         scope.launch(Dispatchers.IO) {
             val serverSocket = try {
-                ServerSocket(NetPorts.GAME)
+                ServerSocket().apply {
+                    reuseAddress = true     // 快速关房重开不占 TIME_WAIT
+                    bind(InetSocketAddress(NetPorts.GAME))
+                }
             } catch (e: Exception) {
                 noticeFlow.value = "开房失败：端口 ${NetPorts.GAME} 被占用"
                 return@launch
@@ -116,7 +126,11 @@ class LanHost(
         acceptJob?.cancel(); acceptJob = null
         aiJob?.cancel(); aiJob = null
         synchronized(connLock) {
-            clients.values.forEach { c -> runCatching { c.socket.close() } }
+            clients.values.forEach { c ->
+                c.outbound.close()
+                c.writeJob?.cancel()
+                runCatching { c.socket.close() }
+            }
             clients.clear()
         }
         advertiser?.stop(); advertiser = null
@@ -143,18 +157,27 @@ class LanHost(
                     ?: throw IllegalStateException("首条消息必须是 join")
 
                 var freeSeat: Int? = null
+                var registered: ClientConn? = null
                 synchronized(connLock) {
                     freeSeat = (1..2).firstOrNull { s -> roomSeats.value[s].name.isEmpty() && !clients.containsKey(s) }
                     if (started || freeSeat == null) {
-                        sendTo(writer, NetMsg.Error(if (started) "对局已开始，无法加入" else "房间已满（3人）"))
+                        // 未注册连接：直接同步回错误后关闭（IO 线程，可阻塞）
+                        runCatching {
+                            writer.write(Protocol.encode(NetMsg.Error(if (started) "对局已开始，无法加入" else "房间已满（3人）")))
+                            writer.newLine(); writer.flush()
+                        }
                         null
                     } else {
-                        clients[freeSeat] = ClientConn(socket, writer, join.name, join.avatar)
+                        val conn = ClientConn(socket, writer, join.name, join.avatar)
+                        clients[freeSeat] = conn
+                        registered = conn
                         joinedSeat = freeSeat
                         freeSeat
                     }
                 }?.let { seat ->
-                    sendTo(writer, NetMsg.Welcome(seat, hostName, ROOM_NAME))
+                    val conn = registered!!
+                    startConnWriter(conn)
+                    conn.outbound.offer(NetMsg.Welcome(seat, hostName, ROOM_NAME))
                     updateRoomSeats()
                     broadcastRoom()
                     advertiser?.playerCount = humanCount()
@@ -178,6 +201,8 @@ class LanHost(
         synchronized(connLock) {
             gone = clients.remove(seat)
         }
+        gone?.outbound?.close()
+        gone?.writeJob?.cancel()
         runCatching { gone?.socket?.close() }
         if (started) {
             onGameThread {
@@ -284,7 +309,7 @@ class LanHost(
 
     private fun relayChat(seat: Int, text: String, sound: Int) {
         chatFlow.value = Triple(seat, text, sound)
-        snapshotClients().forEach { (_, c) -> sendTo(c.writer, NetMsg.ChatBroadcast(seat, text, sound)) }
+        snapshotClients().forEach { (_, c) -> c.outbound.offer(NetMsg.ChatBroadcast(seat, text, sound)) }
     }
 
     // ------------------------------------------------ 引擎调度
@@ -300,11 +325,13 @@ class LanHost(
         broadcast(engine.events.map { it.toNet() })
     }
 
-    /** 广播当前状态（所有连接 + 房主），并驱动 AI */
+    /** 广播当前状态（所有连接 + 房主），并驱动 AI。
+     *  v19：只入队不写 socket，慢/假死客户端不再拖住游戏线程；
+     *  快照编码也移到各连接的写协程上。 */
     private fun broadcast(effects: List<NetMsg.Effect>) {
         val conns = snapshotClients()
         conns.forEach { (seat, conn) ->
-            sendTo(conn.writer, NetMsg.Snapshot(engine.snapshotFor(seat), effects))
+            conn.outbound.offer(NetMsg.Snapshot(engine.snapshotFor(seat), effects))
         }
         hostSnapshot.value = NetMsg.Snapshot(engine.snapshotFor(0), effects)
         scheduleAi()
@@ -312,7 +339,7 @@ class LanHost(
 
     private fun broadcastRoom() {
         val room = NetMsg.Room(roomSeats.value, started, aiLevel, NetUtils.localIpAddress() ?: "?")
-        snapshotClients().forEach { (_, c) -> sendTo(c.writer, room) }
+        snapshotClients().forEach { (_, c) -> c.outbound.offer(room) }
     }
 
     private fun snapshotClients(): List<Pair<Int, ClientConn>> =
@@ -410,19 +437,27 @@ class LanHost(
 
     // ------------------------------------------------ 基础 IO
 
-    private fun sendTo(writer: BufferedWriter, msg: NetMsg) {
-        try {
-            synchronized(writer) {
-                writer.write(Protocol.encode(msg))
-                writer.newLine()
-                writer.flush()
+    /** 每条连接一个专职写协程：唯一的 socket 写入点，永远在 IO 线程。
+     *  写失败 = 连接已死，关 socket 让读循环退出 → onClientGone 自动托管。 */
+    private fun startConnWriter(conn: ClientConn) {
+        conn.writeJob = scope.launch(Dispatchers.IO) {
+            try {
+                while (isActive) {
+                    val msg = conn.outbound.take() ?: break
+                    conn.writer.write(Protocol.encode(msg))
+                    conn.writer.newLine()
+                    conn.writer.flush()
+                }
+            } catch (_: Exception) {
+            } finally {
+                conn.outbound.close()
+                runCatching { conn.socket.close() }
             }
-        } catch (_: Exception) {
         }
     }
 
     private fun sendToClient(seat: Int, msg: NetMsg) {
-        snapshotClients().firstOrNull { it.first == seat }?.let { sendTo(it.second.writer, msg) }
+        snapshotClients().firstOrNull { it.first == seat }?.let { it.second.outbound.offer(msg) }
     }
 
     /** 记牌器（房主本地视角 seat 0） */

@@ -1,6 +1,9 @@
 package com.laoxiang.ddz.ui.game
 
 import android.app.Application
+import android.content.Context
+import android.net.wifi.WifiManager
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.laoxiang.ddz.LaoXiangApp
@@ -95,6 +98,33 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
     private var host: LanHost? = null
     private var client: LanClient? = null
     private var scanner: RoomScanner? = null
+
+    /** 联机期间持有的 WiFi 低延迟锁（v19）：
+     *  手机 WiFi 省电模式会让 AP 缓存发往本机的报文（信号满格也有秒级延迟），
+     *  对局期间保持低延迟模式，点抢地主/出牌才能即时送达。 */
+    private var wifiLock: WifiManager.WifiLock? = null
+
+    private fun acquireWifiLock() {
+        if (wifiLock?.isHeld == true) return
+        runCatching {
+            val wifi = getApplication<Application>().getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                ?: return
+            val lock = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "ddz_lan_lowlat")
+            } else {
+                @Suppress("DEPRECATION")
+                wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "ddz_lan_perf")
+            }
+            lock.setReferenceCounted(false)
+            lock.acquire()
+            wifiLock = lock
+        }
+    }
+
+    private fun releaseWifiLock() {
+        runCatching { if (wifiLock?.isHeld == true) wifiLock?.release() }
+        wifiLock = null
+    }
 
     private fun soundEnabled() = prefs.soundEnabled
 
@@ -244,6 +274,7 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
     fun startHost() {
         mode.value = GameMode.HOST
         mySeat.value = 0
+        acquireWifiLock()
         val h = LanHost(
             hostName = prefs.nickname.ifBlank { "房主" },
             hostAvatar = prefs.avatar,
@@ -317,6 +348,7 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
 
     fun startClient(ip: String) {
         mode.value = GameMode.CLIENT
+        acquireWifiLock()
         val c = LanClient(viewModelScope)
         client = c
         c.mySeat.onEach { mySeat.value = it }.launchIn(viewModelScope)
@@ -578,6 +610,7 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
 
     fun leaveGame() {
         sound.stopBgm()
+        releaseWifiLock()
         when (mode.value) {
             GameMode.HOST -> {
                 host?.stop()
@@ -601,6 +634,7 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         sound.stopBgm()
+        releaseWifiLock()
         host?.stop()
         client?.disconnect()
         scanner?.stop()

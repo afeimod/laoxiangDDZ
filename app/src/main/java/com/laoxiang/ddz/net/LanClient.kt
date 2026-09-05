@@ -15,13 +15,19 @@ import java.net.Socket
  *
  * 连接 → Join → 收 Welcome/Room/Snapshot/Chat
  * 出牌/叫抢/聊天全部发消息，等待房主权威快照。
+ *
+ * v19：所有发送改为「入队 + 专职写协程」——此前从 UI 主线程同步写 socket
+ * 会抛 NetworkOnMainThreadException 被静默吞掉，消息根本没发出去
+ * （表现即「点了抢地主/出牌没反应，几秒后提示送达失败」）。
  */
 class LanClient(
     private val scope: CoroutineScope
 ) {
     private var socket: Socket? = null
     private var writer: BufferedWriter? = null
+    private var outbound = OutboundQueue()
     private var readJob: Job? = null
+    private var writeJob: Job? = null
     private var pingJob: Job? = null
 
     val mySeat = MutableStateFlow(-1)
@@ -41,6 +47,7 @@ class LanClient(
      */
     fun connect(ip: String, name: String, avatar: Int) {
         disconnect()
+        outbound = OutboundQueue()   // disconnect 会关旧队列，重连必须换新队列
         connectError.value = ""   // 连接中
         scope.launch(Dispatchers.IO) {
             try {
@@ -50,10 +57,12 @@ class LanClient(
                 socket = s
                 val w = BufferedWriter(OutputStreamWriter(s.getOutputStream(), Charsets.UTF_8))
                 writer = w
-                val reader = BufferedReader(InputStreamReader(s.getInputStream(), Charsets.UTF_8))
 
+                // 专职写协程：把出站队列逐条写出（真正的 socket IO 全在 IO 线程）
+                writeJob = scope.launch(Dispatchers.IO) { writeLoop(w) }
                 send(NetMsg.Join(name, avatar))
 
+                val reader = BufferedReader(InputStreamReader(s.getInputStream(), Charsets.UTF_8))
                 readJob = scope.launch(Dispatchers.IO) { readLoop(reader) }
                 pingJob = scope.launch(Dispatchers.IO) {
                     while (isActive) {
@@ -97,15 +106,25 @@ class LanClient(
         }
     }
 
+    /** 发送 = 非阻塞入队，任何线程（含 UI 主线程）调用都安全且立即返回 */
     private fun send(msg: NetMsg) {
-        val w = writer ?: return
+        outbound.offer(msg)
+    }
+
+    /** 专职写协程：唯一的 socket 写入点，永远在 IO 线程 */
+    private suspend fun writeLoop(w: BufferedWriter) {
         try {
-            synchronized(w) {
+            while (currentCoroutineContext().isActive) {
+                val msg = outbound.take() ?: break
                 w.write(Protocol.encode(msg))
                 w.newLine()
                 w.flush()
             }
         } catch (_: Exception) {
+            // 写失败 = 连接已死：关 socket 让读循环退出，UI 收到「连接已断开」
+        } finally {
+            connected = false
+            runCatching { socket?.close() }
         }
     }
 
@@ -120,8 +139,9 @@ class LanClient(
     fun chat(text: String, sound: Int = -1) = send(NetMsg.Chat(text, sound))
 
     fun disconnect() {
-        runCatching { send(NetMsg.Leave) }
+        outbound.close()
         readJob?.cancel(); readJob = null
+        writeJob?.cancel(); writeJob = null
         pingJob?.cancel(); pingJob = null
         runCatching { socket?.close() }
         socket = null

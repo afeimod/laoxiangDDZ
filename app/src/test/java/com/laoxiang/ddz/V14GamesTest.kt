@@ -323,17 +323,11 @@ class V14GamesTest {
             listOf(c(5, CardSuit.CLUB), c(5, CardSuit.CLUB), c(8, CardSuit.CLUB), c(8, CardSuit.CLUB)), t, lr
         )
         assertEquals(SjType.THROW, p2?.type)
-        // 主牌拖拉机：♥AA + 小王对（A 主牌内序 14，小王 17 —— 不相邻；v19 起混合甩牌不能领出 → null）
+        // 主牌拖拉机：♥AA + 小王对（A 主牌内序 14，小王 17 —— 不相邻 → 组合）
         val p3 = parsePlay(
             listOf(c(14, t), c(14, t), Card(60, 16, CardSuit.JOKER), Card(114, 16, CardSuit.JOKER)), t, lr
         )
-        assertEquals(null, p3)
-        // 同一手牌作为跟牌垫牌（allowMixed）仍是合法组合
-        val p3b = parsePlay(
-            listOf(c(14, t), c(14, t), Card(60, 16, CardSuit.JOKER), Card(114, 16, CardSuit.JOKER)),
-            t, lr, allowMixed = true
-        )
-        assertEquals(SjType.THROW, p3b?.type)
+        assertEquals(SjType.THROW, p3?.type)
         // 副10对 + 主10对 相邻 → 拖拉机
         val p4 = parsePlay(
             listOf(c(10, CardSuit.CLUB), c(10, CardSuit.CLUB), c(10, t), c(10, t)), t, lr
@@ -358,18 +352,16 @@ class V14GamesTest {
                 val mv = ai.chooseMove(ctx)
                 var ok = mv != null && e.play(seat, mv)
                 if (!ok) {
-                    // 兜底（v17 跟牌规则）：领出副牌=该花色非主牌（级牌属主不算）；领出主牌=全部主牌
+                    // 兜底：跟足领出花色，不足全带 + 任意凑数
                     val hand = e.myHand(seat)
                     val led = e.ledPlay()
                     val n = led?.count ?: 1
-                    val inSuit = if (led == null) emptyList()
-                    else if (led.suit == CardSuit.JOKER) hand.filter { SjRules.isTrump(it, e.trumpSuit, e.levelRank) }
-                    else hand.filter { it.suit == led.suit && !SjRules.isTrump(it, e.trumpSuit, e.levelRank) }
+                    val inSuit = if (led != null && led.suit != CardSuit.JOKER) hand.filter { it.suit == led.suit } else emptyList()
                     val pick = if (led != null && inSuit.size >= n) inSuit.sortedBy { it.rank }.take(n)
                     else if (led != null) {
                         val rest = hand.filter { c -> inSuit.none { it.id == c.id } }.sortedBy { it.rank }
                         (inSuit + rest).take(n)
-                    } else listOf(hand.first())
+                    } else listOf(hand.last())
                     ok = e.play(seat, pick)
                 }
                 assertTrue("seed=$seed 卡局 seat=$seat", ok)

@@ -169,36 +169,21 @@ fun ShengjiGameScreen(vm: ShengjiViewModel, onExit: () -> Unit) {
         SjSeatColumn(top, if (snap.claimSeat == top.seat) "已亮主" else null,
             Modifier.align(Alignment.TopCenter).padding(top = 42.dp), playedCardW * 0.7f)
 
-        // 中央：一圈各家出的牌 / 刚收的上一圈（第四家出牌保留展示） / 不出标
-        val availW = maxWidth
+        // 中央：一圈各家出的牌 / 我的出牌
         Column(
             Modifier.align(Alignment.Center).offset(y = (-18).dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            val shownTrick = if (snap.trickPlays.isNotEmpty()) snap.trickPlays else snap.lastTrick
-            val showingLast = snap.trickPlays.isEmpty() && snap.lastTrick.isNotEmpty()
-            if (shownTrick.isNotEmpty()) {
-                // 按总张数自适应压缩牌宽，四家都出也不溢出屏幕
-                val cols = shownTrick.size
-                val totalCards = shownTrick.sumOf { it.second.size }
-                val fitW: androidx.compose.ui.unit.Dp = minOf(
-                    playedCardW * 0.85f,
-                    (availW - 40.dp - 10.dp * (cols - 1)) /
-                            (cols + 0.58f * (totalCards - cols))
-                )
+            if (snap.trickPlays.isNotEmpty()) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    shownTrick.forEach { (seat, cards) ->
+                    snap.trickPlays.forEach { (seat, cards) ->
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            PlayedCards(cards, fitW)
+                            PlayedCards(cards, playedCardW * 0.85f)
                             Spacer(Modifier.height(2.dp))
                             Text(
-                                snap.seats[seat].name + if (showingLast && seat == snap.lastTrickWinner) " 收圈" else "",
+                                snap.seats[seat].name,
                                 fontSize = 9.sp,
-                                color = when {
-                                    showingLast && seat == snap.lastTrickWinner -> Color(0xFFA5D6A7)
-                                    seat == 0 -> Color(0xFFFFE082)
-                                    else -> Color(0x99FFFFFF)
-                                }
+                                color = if (seat == 0) Color(0xFFFFE082) else Color(0x99FFFFFF)
                             )
                         }
                     }
