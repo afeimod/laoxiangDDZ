@@ -56,14 +56,15 @@ fun PdkGameScreen(pdkVm: PdkViewModel, onExit: () -> Unit) {
         return
     }
 
-    val me = snap.seats[0]
+    val mySeat by pdkVm.mySeat.collectAsState()
     val n = snap.seats.size
-    // 右=下家(+1)，左=上家(-1)，四人局顶部=对家(+2)
-    val right = snap.seats[1 % n]
-    val left = snap.seats[(n - 1) % n]
-    val top = if (n == 4) snap.seats[2] else null
+    // 按 mySeat 旋转：座 0=我、右=下家(+1)、左=上家(-1)、四人局顶部=对家(+2)
+    val me = snap.seats[mySeat.coerceIn(0, n - 1)]
+    val right = snap.seats[(mySeat + 1) % n]
+    val left = snap.seats[(mySeat + n - 1) % n]
+    val top = if (n == 4) snap.seats[(mySeat + 2) % n] else null
 
-    val myTurn = snap.phase == Phase.PLAYING && snap.turn == 0
+    val myTurn = snap.phase == Phase.PLAYING && snap.turn == mySeat
     val firstLead = snap.playedRanks.values.all { it == 0 }
 
     // ---------- 状态
@@ -110,6 +111,16 @@ fun PdkGameScreen(pdkVm: PdkViewModel, onExit: () -> Unit) {
         if (toast != null) {
             delay(2000)
             toast = null
+        }
+    }
+
+    // 联机操作未送达提示（v20）
+    LaunchedEffect(Unit) {
+        pdkVm.opNotice.collect { t ->
+            if (t != null) {
+                toast = System.nanoTime() to t
+                pdkVm.clearOpNotice()
+            }
         }
     }
 

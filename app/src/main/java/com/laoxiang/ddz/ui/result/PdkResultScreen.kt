@@ -37,7 +37,8 @@ fun PdkResultScreen(
 ) {
     val snap = pdkVm.snapshot.collectAsState().value ?: return
     val result = snap.result ?: return
-    val myDelta = result.scoreDelta[0] ?: 0
+    val mySeat = pdkVm.mySeat.collectAsState().value
+    val myDelta = result.scoreDelta[mySeat] ?: 0
     val iWon = myDelta > 0
 
     val confetti = remember {

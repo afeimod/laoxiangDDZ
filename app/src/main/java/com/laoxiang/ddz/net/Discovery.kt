@@ -24,14 +24,21 @@ data class RoomBroadcast(
     val ip: String,
     val port: Int = NetPorts.GAME,
     val players: Int,
-    val started: Boolean
+    val started: Boolean,
+    /** 房间玩的游戏：ddz / guandan / shengji / pdk / bigtwo（v20） */
+    val game: String = "ddz",
+    /** 房间座位数（3 或 4） */
+    val seats: Int = 3
 )
 
 /** 房主广播器 */
 class RoomAdvertiser(
     private val roomName: String,
     private val hostName: String,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    /** 房间游戏类型与座位数（v20） */
+    private val game: String = "ddz",
+    private val seats: Int = 3
 ) {
     private var job: Job? = null
     private var socket: DatagramSocket? = null
@@ -58,7 +65,9 @@ class RoomAdvertiser(
                             hostName = hostName,
                             ip = NetUtils.localIpAddress() ?: "?",
                             players = playerCount,
-                            started = started
+                            started = started,
+                            game = game,
+                            seats = seats
                         )
                         val data = netJson.encodeToString(msg).toByteArray(Charsets.UTF_8)
                         socket?.send(DatagramPacket(data, data.size, bcAddr, NetPorts.DISCOVERY))

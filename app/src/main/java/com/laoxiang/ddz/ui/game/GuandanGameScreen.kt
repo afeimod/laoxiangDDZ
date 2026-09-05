@@ -66,12 +66,14 @@ fun GuandanGameScreen(vm: GuandanViewModel, onExit: () -> Unit) {
         return
     }
 
-    val me = snap.seats[0]
-    val right = snap.seats[1]
-    val top = snap.seats[2]
-    val left = snap.seats[3]
+    val mySeat by vm.mySeat.collectAsState()
+    // 按 mySeat 旋转：右=下家(+1)、顶=对家(+2)、左=上家(+3)
+    val me = snap.seats[mySeat.coerceIn(0, 3)]
+    val right = snap.seats[(mySeat + 1) % 4]
+    val top = snap.seats[(mySeat + 2) % 4]
+    val left = snap.seats[(mySeat + 3) % 4]
 
-    val myTurn = snap.phase == Phase.PLAYING && snap.turn == 0
+    val myTurn = snap.phase == Phase.PLAYING && snap.turn == mySeat
 
     var toast by remember { mutableStateOf<Pair<Long, String>?>(null) }
     val shake = remember { Animatable(0f) }
@@ -103,6 +105,16 @@ fun GuandanGameScreen(vm: GuandanViewModel, onExit: () -> Unit) {
     }
     LaunchedEffect(toast?.first) {
         if (toast != null) { delay(2000); toast = null }
+    }
+
+    // 联机操作未送达提示（v20）
+    LaunchedEffect(Unit) {
+        vm.opNotice.collect { t ->
+            if (t != null) {
+                toast = System.nanoTime() to t
+                vm.clearOpNotice()
+            }
+        }
     }
 
     // 发牌逐张动画（两副牌混发：显示顺序即混排后的手牌序）
@@ -309,7 +321,7 @@ fun GuandanGameScreen(vm: GuandanViewModel, onExit: () -> Unit) {
                     me.name, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                     color = if (me.isTurn) Color(0xFFFFE082) else Color.White
                 )
-                Text("蓝队 · 对家并肩", fontSize = 9.sp, color = Color(0x99FFFFFF))
+                Text(if (gdTeamOf(mySeat) == GdTeam.A) "蓝队 · 对家并肩" else "橙队 · 对家并肩", fontSize = 9.sp, color = Color(0x99FFFFFF))
             }
             // 我喊话的气泡：显示在头像上方
             myBubble?.let { (_, t) ->
@@ -348,7 +360,7 @@ fun GuandanGameScreen(vm: GuandanViewModel, onExit: () -> Unit) {
                         .padding(horizontal = 30.dp, vertical = 22.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    val iWon = gdTeamOf(0) == r.winnerTeam
+                    val iWon = gdTeamOf(mySeat) == r.winnerTeam
                     Text(
                         if (iWon) "我方胜！" else "对方胜",
                         fontSize = 26.sp, fontWeight = FontWeight.Black,

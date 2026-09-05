@@ -17,41 +17,36 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
-import com.laoxiang.ddz.data.Phase
 import com.laoxiang.ddz.net.NetMsg
 import com.laoxiang.ddz.net.RoomBroadcast
 import com.laoxiang.ddz.ui.common.*
-import com.laoxiang.ddz.ui.game.GameMode
-import com.laoxiang.ddz.ui.game.GameViewModel
 import com.laoxiang.ddz.ui.theme.*
 import androidx.compose.runtime.collectAsState
 
 /**
  * 联机房间页（App 已锁横屏，双栏单屏布局，全程不滚动）：
  * HOST   —— 左：房号/说明/IP；右：座位 + AI 难度 + 开局
- * CLIENT —— 左：找牌局说明 + 手动 IP；右：附近牌桌列表 / 已上桌等待
+ * CLIENT —— 左：找牌局说明 + 手动 IP（可选游戏）；右：附近牌桌列表 / 已上桌等待
+ * v20：通用化支持全系列纸牌（座位数 3/4，房间列表显示游戏类型）
  */
 @Composable
 fun RoomScreen(
-    gameVm: GameViewModel,
+    roomUi: NetRoomUi,
     onExit: () -> Unit,
-    onEnterGame: () -> Unit
+    onEnterGame: () -> Unit,
+    onJoinRoom: (RoomBroadcast) -> Unit
 ) {
-    val mode = gameVm.mode.collectAsState().value
-    val snapshot by gameVm.snapshot.collectAsState()
-    val roomStarted by gameVm.roomStarted.collectAsState()
+    val live by roomUi.gameLive.collectAsState()
 
     // 对局开始时自动进入
-    LaunchedEffect(snapshot?.phase, roomStarted) {
-        val phase = snapshot?.phase
-        if (phase == Phase.BIDDING || phase == Phase.ROBBING || phase == Phase.PLAYING) {
-            onEnterGame()
-        }
+    LaunchedEffect(live) {
+        if (live) onEnterGame()
     }
 
-    when (mode) {
-        GameMode.HOST -> HostRoom(gameVm, onExit)
-        else -> ClientRoom(gameVm, onExit)
+    if (roomUi.isHostSide) {
+        HostRoom(roomUi, onExit)
+    } else {
+        ClientRoom(roomUi, onExit, onJoinRoom)
     }
 }
 
@@ -88,11 +83,11 @@ private fun RoomBackdrop(content: @Composable RowScope.() -> Unit) {
 // ------------------------------------------------ 房主
 
 @Composable
-private fun HostRoom(gameVm: GameViewModel, onExit: () -> Unit) {
-    val seats by gameVm.roomSeats.collectAsState()
-    val aiLevel = gameVm.prefs.aiLevel
-    val notice by gameVm.notice.collectAsState()
-    val hostIp by gameVm.hostIp.collectAsState()
+private fun HostRoom(roomUi: NetRoomUi, onExit: () -> Unit) {
+    val seats by roomUi.roomSeats.collectAsState()
+    val aiLevel by roomUi.aiLevelUi.collectAsState()
+    val notice by roomUi.notice.collectAsState()
+    val hostIp by roomUi.hostIp.collectAsState()
 
     RoomBackdrop {
         // ===== 左栏：标题 + 说明 + IP
@@ -149,7 +144,7 @@ private fun HostRoom(gameVm: GameViewModel, onExit: () -> Unit) {
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                seats.take(3).forEach { s ->
+                seats.take(roomUi.seatCount).forEach { s ->
                     SeatCard(s, Modifier.weight(1f))
                 }
             }
@@ -168,7 +163,7 @@ private fun HostRoom(gameVm: GameViewModel, onExit: () -> Unit) {
                 listOf(0, 1, 2).forEach { lv ->
                     FilterChip(
                         selected = aiLevel == lv,
-                        onClick = { gameVm.hostSetAiLevel(lv) },
+                        onClick = { roomUi.hostSetAiLevel(lv) },
                         label = { Text(listOf("简单", "中等", "困难")[lv]) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = LightGold,
@@ -178,7 +173,7 @@ private fun HostRoom(gameVm: GameViewModel, onExit: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(12.dp))
-            GoldButton("开局（空位电脑顶上）") { gameVm.hostStartGame() }
+            GoldButton("开局（空位电脑顶上）") { roomUi.hostStartGame() }
         }
     }
 }
@@ -186,18 +181,23 @@ private fun HostRoom(gameVm: GameViewModel, onExit: () -> Unit) {
 // ------------------------------------------------ 客户端（找牌局）
 
 @Composable
-private fun ClientRoom(gameVm: GameViewModel, onExit: () -> Unit) {
-    val rooms by gameVm.foundRooms.collectAsState()
-    val seats by gameVm.roomSeats.collectAsState()
-    val connectState by gameVm.connectState.collectAsState()
-    val mySeat by gameVm.mySeat.collectAsState()
+private fun ClientRoom(
+    roomUi: NetRoomUi,
+    onExit: () -> Unit,
+    onJoinRoom: (RoomBroadcast) -> Unit
+) {
+    val rooms by roomUi.foundRooms.collectAsState()
+    val seats by roomUi.roomSeats.collectAsState()
+    val connectState by roomUi.connectState.collectAsState()
+    val mySeat by roomUi.mySeat.collectAsState()
     var manualIp by remember { mutableStateOf("") }
+    var manualGame by remember { mutableStateOf("ddz") }
     val context = LocalContext.current
 
-    // 进页即开始扫描
-    DisposableEffect(Unit) {
-        gameVm.startScan(context)
-        onDispose { gameVm.stopScan() }
+    // 进页即开始扫描（按房间页归属扫描：斗地主房间扫斗地主，其余走 NetLobby 跨游戏浏览）
+    DisposableEffect(roomUi) {
+        roomUi.startScan(context)
+        onDispose { roomUi.stopScan() }
     }
 
     // 只有真正连上房间（服务端分配了座位）才算“已上桌”
@@ -220,7 +220,8 @@ private fun ClientRoom(gameVm: GameViewModel, onExit: () -> Unit) {
                 }
             }
             Text(
-                if (joined) "房主一点开局，马上开打" else "自动搜寻同 WiFi 的老乡牌桌，也可手动输 IP",
+                if (joined) "房主一点开局，马上开打"
+                else "自动搜寻同 WiFi 的老乡牌桌（各玩法都有），也可手动输 IP",
                 fontSize = 13.sp, color = Color(0xCCFFD9A0)
             )
             if (!joined) {
@@ -229,6 +230,24 @@ private fun ClientRoom(gameVm: GameViewModel, onExit: () -> Unit) {
                     "手动连接（房主屏幕上会显示 IP）",
                     color = Color(0xFFFFE9C4), fontWeight = FontWeight.SemiBold
                 )
+                Spacer(Modifier.height(6.dp))
+                // 手动连接需要指定游戏（广播发现无需：列表自带游戏标签）
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    NET_GAMES.forEach { g ->
+                        FilterChip(
+                            selected = manualGame == g.id,
+                            onClick = { manualGame = g.id },
+                            label = { Text(g.label, fontSize = 11.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = LightGold,
+                                selectedLabelColor = DeepRed
+                            )
+                        )
+                    }
+                }
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
@@ -249,7 +268,7 @@ private fun ClientRoom(gameVm: GameViewModel, onExit: () -> Unit) {
                     )
                     Spacer(Modifier.width(10.dp))
                     Button(
-                        onClick = { if (manualIp.isNotBlank()) gameVm.startClient(manualIp) },
+                        onClick = { if (manualIp.isNotBlank()) roomUi.joinByIp(manualGame, manualIp) },
                         colors = ButtonDefaults.buttonColors(containerColor = ChineseRed),
                         shape = RoundedCornerShape(12.dp)
                     ) {
@@ -284,7 +303,7 @@ private fun ClientRoom(gameVm: GameViewModel, onExit: () -> Unit) {
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    seats.take(3).forEach { s ->
+                    seats.take(roomUi.seatCount).forEach { s ->
                         SeatCard(s, Modifier.weight(1f), highlight = s.seat == mySeat)
                     }
                 }
@@ -317,7 +336,7 @@ private fun ClientRoom(gameVm: GameViewModel, onExit: () -> Unit) {
                         modifier = Modifier.fillMaxHeight()
                     ) {
                         items(rooms) { room ->
-                            RoomRow(room) { gameVm.startClient(room.ip) }
+                            RoomRow(room) { onJoinRoom(room) }
                         }
                     }
                 }
@@ -331,14 +350,23 @@ private fun RoomRow(room: RoomBroadcast, onJoin: () -> Unit) {
     GoldCard(corner = 14.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        room.roomName,
+                        fontWeight = FontWeight.Bold,
+                        color = DeepRed,
+                        fontSize = 15.sp
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "「" + gameLabelOf(room.game, room.seats) + "」",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF37609B)
+                    )
+                }
                 Text(
-                    room.roomName,
-                    fontWeight = FontWeight.Bold,
-                    color = DeepRed,
-                    fontSize = 15.sp
-                )
-                Text(
-                    "房主 ${room.hostName} · ${room.players}/3 人" +
+                    "房主 ${room.hostName} · ${room.players}/${room.seats.coerceAtLeast(3)} 人" +
                             if (room.started) " · 已开局" else "",
                     fontSize = 12.sp, color = Color(0xFF8A6A45)
                 )

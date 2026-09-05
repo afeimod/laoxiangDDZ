@@ -10,6 +10,7 @@ import com.laoxiang.ddz.LaoXiangApp
 import com.laoxiang.ddz.audio.VoiceMap
 import com.laoxiang.ddz.data.*
 import com.laoxiang.ddz.net.*
+import com.laoxiang.ddz.ui.room.NetRoomUi
 import com.laoxiang.ddz.util.Prefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -43,7 +44,7 @@ sealed class Fx {
 /** 聊天气泡数据 */
 data class ChatBubble(val seat: Int, val text: String, val at: Long)
 
-class GameViewModel(app: Application) : AndroidViewModel(app) {
+class GameViewModel(app: Application) : AndroidViewModel(app), NetRoomUi {
 
     private val sound = (app as LaoXiangApp).sound
     val prefs = Prefs(app)
@@ -56,7 +57,7 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
     val snapshot = MutableStateFlow<GameSnapshot?>(null)
 
     /** 我的座位（-1 = 未上桌；防止加入牌局页误判为已加入） */
-    val mySeat = MutableStateFlow(-1)
+    override val mySeat = MutableStateFlow(-1)
 
     /** 选中的牌 id */
     val selected = MutableStateFlow<Set<Int>>(emptySet())
@@ -80,14 +81,14 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
     val chatBubbles = MutableStateFlow<List<ChatBubble>>(emptyList())
 
     /** 房间状态（联机） */
-    val roomSeats = MutableStateFlow<List<NetMsg.SeatInfo>>(emptyList())
-    val roomStarted = MutableStateFlow(false)
-    val hostIp = MutableStateFlow<String?>(null)
-    val connectState = MutableStateFlow<String?>(null)
-    val notice = MutableStateFlow<String?>(null)
+    override val roomSeats = MutableStateFlow<List<NetMsg.SeatInfo>>(emptyList())
+    override val roomStarted = MutableStateFlow(false)
+    override val hostIp = MutableStateFlow<String?>(null)
+    override val connectState = MutableStateFlow<String?>(null)
+    override val notice = MutableStateFlow<String?>(null)
 
     /** 发现的房间 */
-    val foundRooms = MutableStateFlow<List<RoomBroadcast>>(emptyList())
+    override val foundRooms = MutableStateFlow<List<RoomBroadcast>>(emptyList())
 
     /** 战报（本局分数，正负） */
     val lastScore = MutableStateFlow(0)
@@ -304,12 +305,13 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
         sound.startBgm()
     }
 
-    fun hostSetAiLevel(level: Int) {
+    override fun hostSetAiLevel(level: Int) {
         prefs.aiLevel = level
+        _aiLevelUi.value = level
         host?.setAiLevel(level)
     }
 
-    fun hostStartGame() {
+    override fun hostStartGame() {
         host?.startGame()
         snapshot.value = null
     }
@@ -390,7 +392,7 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 开始扫描房间 */
-    fun startScan(context: android.content.Context) {
+    override fun startScan(context: Context) {
         stopScan()
         scanner = RoomScanner(context, viewModelScope) { rooms ->
             // 剔除自己开的房
@@ -399,10 +401,26 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
         scanner?.start()
     }
 
-    fun stopScan() {
+    override fun stopScan() {
         scanner?.stop()
         scanner = null
     }
+
+    // ------------------------------------------------ NetRoomUi 适配（房间页通用化，v20）
+
+    private val _aiLevelUi = MutableStateFlow(prefs.aiLevel)
+    override val aiLevelUi: StateFlow<Int> = _aiLevelUi.asStateFlow()
+
+    override val gameLive: StateFlow<Boolean> = snapshot
+        .map { it != null && it.phase in setOf(Phase.BIDDING, Phase.ROBBING, Phase.PLAYING) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    override val seatCount: Int get() = 3
+    override val isHostSide: Boolean get() = mode.value == GameMode.HOST
+
+    override fun joinByIp(game: String, ip: String) = startClient(ip)
+
+    override fun leaveRoom() = leaveGame()
 
     // ================================================= 联机操作可靠性（客户端）
 

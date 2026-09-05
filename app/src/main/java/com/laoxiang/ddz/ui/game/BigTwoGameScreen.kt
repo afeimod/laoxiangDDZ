@@ -51,12 +51,14 @@ fun BigTwoGameScreen(vm: BigTwoViewModel, onExit: () -> Unit) {
         return
     }
 
-    val me = snap.seats[0]
-    val right = snap.seats[1]
-    val top = snap.seats[2]
-    val left = snap.seats[3]
+    val mySeat by vm.mySeat.collectAsState()
+    // 按 mySeat 旋转：左=上家(-1)、右=下家(+1)、顶=对家(+2)
+    val me = snap.seats[mySeat.coerceIn(0, 3)]
+    val right = snap.seats[(mySeat + 1) % 4]
+    val top = snap.seats[(mySeat + 2) % 4]
+    val left = snap.seats[(mySeat + 3) % 4]
 
-    val myTurn = snap.phase == Phase.PLAYING && snap.turn == 0
+    val myTurn = snap.phase == Phase.PLAYING && snap.turn == mySeat
     val firstLead = snap.playedRanks.values.all { it == 0 }
 
     var toast by remember { mutableStateOf<Pair<Long, String>?>(null) }
@@ -82,6 +84,16 @@ fun BigTwoGameScreen(vm: BigTwoViewModel, onExit: () -> Unit) {
     }
     LaunchedEffect(toast?.first) {
         if (toast != null) { delay(2000); toast = null }
+    }
+
+    // 联机操作未送达提示（v20）
+    LaunchedEffect(Unit) {
+        vm.opNotice.collect { t ->
+            if (t != null) {
+                toast = System.nanoTime() to t
+                vm.clearOpNotice()
+            }
+        }
     }
 
     // 发牌逐张动画
@@ -137,6 +149,7 @@ fun BigTwoGameScreen(vm: BigTwoViewModel, onExit: () -> Unit) {
         if (showCounter) {
             BtCounterPanel(
                 snap,
+                mySeat,
                 Modifier.align(Alignment.TopCenter).padding(top = 36.dp)
             )
         }
@@ -321,12 +334,12 @@ private fun BtSeatColumn(
 
 /** 锄大地记牌器（3..2，无王） */
 @Composable
-private fun BtCounterPanel(snap: BtSnapshot, modifier: Modifier = Modifier) {
+private fun BtCounterPanel(snap: BtSnapshot, mySeat: Int, modifier: Modifier = Modifier) {
     val labels = mapOf(
         3 to "3", 4 to "4", 5 to "5", 6 to "6", 7 to "7", 8 to "8", 9 to "9", 10 to "10",
         11 to "J", 12 to "Q", 13 to "K", 14 to "A", 15 to "2"
     )
-    val mine = snap.seats.first { it.seat == 0 }.hand.groupBy { it.rank }.mapValues { it.value.size }
+    val mine = snap.seats.first { it.seat == mySeat }.hand.groupBy { it.rank }.mapValues { it.value.size }
     Column(
         modifier
             .clip(RoundedCornerShape(10.dp))

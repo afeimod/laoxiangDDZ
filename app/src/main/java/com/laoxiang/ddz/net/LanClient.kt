@@ -1,5 +1,6 @@
 package com.laoxiang.ddz.net
 
+import com.laoxiang.ddz.data.CardSuit
 import com.laoxiang.ddz.data.GameSnapshot
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,6 +34,8 @@ class LanClient(
     val mySeat = MutableStateFlow(-1)
     val roomState = MutableStateFlow<NetMsg.Room?>(null)
     val snapshot = MutableStateFlow<NetMsg.Snapshot?>(null)
+    /** 通用对局快照（v20：掼蛋/升级/跑得快/锄大地联机用） */
+    val gSnapshot = MutableStateFlow<NetMsg.GSnapshot?>(null)
     val chatFlow = MutableStateFlow<Triple<Int, String, Int>?>(null)
     val kicked = MutableStateFlow(false)
 
@@ -92,6 +95,7 @@ class LanClient(
                     }
                     is NetMsg.Room -> roomState.value = msg
                     is NetMsg.Snapshot -> snapshot.value = msg
+                    is NetMsg.GSnapshot -> gSnapshot.value = msg
                     is NetMsg.ChatBroadcast -> chatFlow.value = Triple(msg.seat, msg.text, msg.sound)
                     is NetMsg.Error -> connectError.value = msg.text
                     is NetMsg.Kicked -> kicked.value = true
@@ -136,6 +140,15 @@ class LanClient(
 
     fun pass() = send(NetMsg.Pass)
 
+    /** 升级亮主（suit=null 亮无主） */
+    fun claim(suit: CardSuit?) = send(NetMsg.Claim(suit))
+
+    /** 掼蛋/升级：开下一副 */
+    fun nextHand() = send(NetMsg.NextHand)
+
+    /** 跑得快/锄大地：再来一局 */
+    fun restart() = send(NetMsg.Restart)
+
     fun chat(text: String, sound: Int = -1) = send(NetMsg.Chat(text, sound))
 
     fun disconnect() {
@@ -150,6 +163,7 @@ class LanClient(
         mySeat.value = -1
         roomState.value = null
         snapshot.value = null
+        gSnapshot.value = null
         kicked.value = false
     }
 

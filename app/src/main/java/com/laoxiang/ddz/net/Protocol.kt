@@ -4,6 +4,8 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import com.laoxiang.ddz.data.CardSuit
 import com.laoxiang.ddz.data.GameSnapshot
 
 /**
@@ -62,6 +64,21 @@ sealed interface NetMsg {
     @SerialName("ping")
     object Ping : NetMsg
 
+    /** 升级亮主：suit=null 亮无主（v20 全系列联机） */
+    @Serializable
+    @SerialName("claim")
+    data class Claim(val suit: CardSuit? = null) : NetMsg
+
+    /** 掼蛋/升级：结算后开下一副（房主端引擎幂等，任何玩家都可发起） */
+    @Serializable
+    @SerialName("nexthand")
+    object NextHand : NetMsg
+
+    /** 跑得快/锄大地：一局结束后再开一局（仅 GAME_OVER 时生效） */
+    @Serializable
+    @SerialName("restart")
+    object Restart : NetMsg
+
     // ---------------- 房主 → 客户端 ----------------
 
     @Serializable
@@ -84,7 +101,9 @@ sealed interface NetMsg {
         val seats: List<SeatInfo>,
         val started: Boolean,
         val aiLevel: Int,
-        val hostIp: String
+        val hostIp: String,
+        /** 房间玩的游戏：ddz / guandan / shengji / pdk / bigtwo（v20） */
+        val game: String = "ddz"
     ) : NetMsg
 
     /** 视觉 / 音效事件（简化，客户端按序播报） */
@@ -101,6 +120,15 @@ sealed interface NetMsg {
     @SerialName("snapshot")
     data class Snapshot(
         val snapshot: GameSnapshot,
+        val effects: List<Effect> = emptyList()
+    ) : NetMsg
+
+    /** 通用对局快照（v20 全系列联机）：payload 为各游戏自己的快照 JSON */
+    @Serializable
+    @SerialName("gsnap")
+    data class GSnapshot(
+        val game: String,
+        val payload: JsonElement,
         val effects: List<Effect> = emptyList()
     ) : NetMsg
 

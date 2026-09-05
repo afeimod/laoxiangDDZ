@@ -17,6 +17,8 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.laoxiang.ddz.data.PdkMode
+import com.laoxiang.ddz.net.NetLobby
+import com.laoxiang.ddz.net.RoomBroadcast
 import com.laoxiang.ddz.ui.collection.CollectionScreen
 import com.laoxiang.ddz.ui.game.BigTwoGameScreen
 import com.laoxiang.ddz.ui.game.BigTwoViewModel
@@ -32,12 +34,16 @@ import com.laoxiang.ddz.ui.game.ShengjiViewModel
 import com.laoxiang.ddz.ui.lobby.LobbyScreen
 import com.laoxiang.ddz.ui.result.PdkResultScreen
 import com.laoxiang.ddz.ui.result.ResultScreen
+import com.laoxiang.ddz.ui.room.NetRoomUi
 import com.laoxiang.ddz.ui.room.RoomScreen
+import com.laoxiang.ddz.ui.room.NET_GAMES
+import com.laoxiang.ddz.ui.room.parseNetGame
 import com.laoxiang.ddz.ui.theme.LaoXiangDDZTheme
 
 /**
  * 老乡斗地主 主界面
- * 页面流：大厅 →（房间 | 斗地主对局 | 棋牌合集 → 跑得快对局）→ 结算 → 返回
+ * 页面流：大厅 →（房间 | 全系列对局 | 棋牌合集 → 各对局）→ 结算 → 返回
+ * v20：本地联机扩展到全系列纸牌（掼蛋/升级/跑得快/锄大地走 NetLobby；斗地主沿用原链路）
  * 全屏沉浸：隐藏状态栏与导航栏，从屏幕边缘上/下滑可临时呼出
  */
 class MainActivity : ComponentActivity() {
@@ -52,6 +58,7 @@ class MainActivity : ComponentActivity() {
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             }
         }
+        NetLobby.appContext = applicationContext
         setContent {
             LaoXiangDDZTheme {
                 LaoXiangRoot()
@@ -85,10 +92,48 @@ fun LaoXiangRoot() {
     val gdVm: GuandanViewModel = viewModel()
     val sjVm: ShengjiViewModel = viewModel()
     var page by remember { mutableStateOf(Page.LOBBY) }
+    // 当前房间页归属："ddz"=斗地主原链路；"net"=NetLobby（跨游戏浏览/非斗地主房间）
+    var roomOwner by remember { mutableStateOf("net") }
     val snapshot by gameVm.snapshot.collectAsState()
     val showResult = snapshot?.result != null
     val pdkSnapshot by pdkVm.snapshot.collectAsState()
     val showPdkResult = pdkSnapshot?.result != null
+
+    // NetLobby 偏好注入 + 斗地主手动 IP 转接
+    NetLobby.prefsAiLevel = gameVm.prefs.aiLevel
+    NetLobby.prefsNickname = gameVm.prefs.nickname
+    NetLobby.prefsAvatar = gameVm.prefs.avatar
+    NetLobby.onJoinDdz = { ip ->
+        roomOwner = "ddz"
+        gameVm.startClient(ip)
+        page = Page.ROOM
+    }
+
+    /** 加入附近房间（按房间游戏路由） */
+    fun joinRoom(room: RoomBroadcast) {
+        if (room.game == "ddz") {
+            NetLobby.leave()
+            roomOwner = "ddz"
+            gameVm.startClient(room.ip)
+        } else {
+            roomOwner = "net"
+            NetLobby.startClient(room.ip, room.game, room.seats.coerceAtLeast(3))
+        }
+    }
+
+    /** 房间页 → 对局页（按当前会话游戏路由） */
+    fun enterNetGame() {
+        if (roomOwner == "ddz") {
+            page = Page.GAME
+            return
+        }
+        when (NetLobby.activeGame) {
+            "guandan" -> { gdVm.bindNet(); page = Page.GUANDAN }
+            "shengji" -> { sjVm.bindNet(); page = Page.SHENGJI }
+            "pdk" -> { pdkVm.bindNet(); page = Page.PDK }
+            "bigtwo" -> { btVm.bindNet(); page = Page.BIGTWO }
+        }
+    }
 
     when {
         page == Page.PDK && showPdkResult -> PdkResultScreen(
@@ -97,7 +142,7 @@ fun LaoXiangRoot() {
                 pdkVm.exitGame()
                 page = Page.LOBBY
             },
-            onAgain = { pdkVm.start(pdkSnapshot!!.mode) }
+            onAgain = { pdkVm.again(pdkSnapshot!!.mode) }
         )
         page == Page.PDK -> PdkGameScreen(
             pdkVm = pdkVm,
@@ -171,25 +216,40 @@ fun LaoXiangRoot() {
                 page = Page.LOBBY
             }
         )
-        page == Page.ROOM -> RoomScreen(
-            gameVm = gameVm,
-            onExit = {
-                gameVm.leaveGame()
-                page = Page.LOBBY
-            },
-            onEnterGame = { page = Page.GAME }
-        )
+        page == Page.ROOM -> {
+            val roomUi: NetRoomUi = if (roomOwner == "ddz") gameVm else NetLobby
+            RoomScreen(
+                roomUi = roomUi,
+                onExit = {
+                    roomUi.leaveRoom()
+                    page = Page.LOBBY
+                },
+                onEnterGame = { enterNetGame() },
+                onJoinRoom = { joinRoom(it) }
+            )
+        }
         else -> LobbyScreen(
             gameVm = gameVm,
             onSingle = { level ->
                 gameVm.startSingle(level)
                 page = Page.GAME
             },
-            onHost = {
-                gameVm.startHost()
+            onHost = { selId ->
+                val (game, seats) = parseNetGame(selId)
+                if (game == "ddz") {
+                    NetLobby.leave()
+                    roomOwner = "ddz"
+                    gameVm.startHost()
+                } else {
+                    roomOwner = "net"
+                    NetLobby.startHost(game, seats, gameVm.prefs.nickname, gameVm.prefs.avatar)
+                }
                 page = Page.ROOM
             },
-            onJoin = { page = Page.ROOM },
+            onJoin = {
+                roomOwner = "net"     // 串门浏览页 = NetLobby（跨游戏列表 + 手动 IP 选玩法）
+                page = Page.ROOM
+            },
             onCollection = { page = Page.COLLECTION }
         )
     }

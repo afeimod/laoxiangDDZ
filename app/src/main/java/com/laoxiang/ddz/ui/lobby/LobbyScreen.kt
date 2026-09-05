@@ -39,6 +39,7 @@ import com.laoxiang.ddz.R
 import com.laoxiang.ddz.ui.common.AvatarImage
 import com.laoxiang.ddz.ui.game.GameViewModel
 import com.laoxiang.ddz.ui.game.TableBg
+import com.laoxiang.ddz.ui.room.NET_GAMES
 import com.laoxiang.ddz.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -53,7 +54,7 @@ import kotlinx.coroutines.withContext
 fun LobbyScreen(
     gameVm: GameViewModel,
     onSingle: (Int) -> Unit,
-    onHost: () -> Unit,
+    onHost: (String) -> Unit,
     onJoin: () -> Unit,
     onCollection: () -> Unit
 ) {
@@ -66,6 +67,7 @@ fun LobbyScreen(
     var showSettings by remember { mutableStateOf(false) }
     var showNicknameEditor by remember { mutableStateOf(false) }
     var showNetChooser by remember { mutableStateOf(false) }
+    var netGameSel by remember { mutableStateOf("ddz") }
     var nicknameDraft by remember { mutableStateOf("") }
     var aiLevel by remember { mutableStateOf(prefs.aiLevel) }
     // 牌桌背景选择（v12：预设 4 款 + 相册自定义）
@@ -330,7 +332,7 @@ fun LobbyScreen(
             )
         }
 
-        // ---------- 本地联机选择弹层（开一桌 / 加入牌局）
+        // ---------- 本地联机选择弹层（选玩法 → 开一桌 / 加入牌局）
         if (showNetChooser) {
             AlertDialog(
                 onDismissRequest = { showNetChooser = false },
@@ -340,24 +342,65 @@ fun LobbyScreen(
                         Text("算了", color = Color(0xFF8A6A45))
                     }
                 },
-                title = { Text("本地联机", fontWeight = FontWeight.Bold) },
+                title = { Text("本地联机 · 选玩法", fontWeight = FontWeight.Bold) },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        LanEntry(
-                            "开一桌 · 当房主（同一 WiFi）",
-                            Modifier.fillMaxWidth(),
-                            height = 52.dp
-                        ) {
-                            showNetChooser = false
-                            onHost()
+                    // v21 修复：横屏可用高度小，原竖排两个 52dp 按钮把内容顶超弹窗
+                    // 高度被压缩重叠——改为并排一行 + 整列可滚动兜底（与设置弹层一致）
+                    Column(
+                        Modifier.verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            "开一桌玩哪种？加入牌局则不限（右侧列表直接搜全玩法）",
+                            fontSize = 11.sp,
+                            color = Color(0x994A6285)
+                        )
+                        // 游戏选择（两行 chips）
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            NET_GAMES.take(3).forEach { g ->
+                                FilterChip(
+                                    selected = netGameSel == g.id,
+                                    onClick = { netGameSel = g.id },
+                                    label = { Text(g.label, fontSize = 12.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = LightGold,
+                                        selectedLabelColor = DeepRed
+                                    )
+                                )
+                            }
                         }
-                        LanEntry(
-                            "串门 · 加入附近的牌局",
-                            Modifier.fillMaxWidth(),
-                            height = 52.dp
-                        ) {
-                            showNetChooser = false
-                            onJoin()
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            NET_GAMES.drop(3).forEach { g ->
+                                FilterChip(
+                                    selected = netGameSel == g.id,
+                                    onClick = { netGameSel = g.id },
+                                    label = { Text(g.label, fontSize = 12.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = LightGold,
+                                        selectedLabelColor = DeepRed
+                                    )
+                                )
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            LanEntry(
+                                "开一桌 · 当房主",
+                                Modifier.weight(1f),
+                                height = 46.dp,
+                                fontSize = 13.sp
+                            ) {
+                                showNetChooser = false
+                                onHost(netGameSel)
+                            }
+                            LanEntry(
+                                "串门 · 加入牌局",
+                                Modifier.weight(1f),
+                                height = 46.dp,
+                                fontSize = 13.sp
+                            ) {
+                                showNetChooser = false
+                                onJoin()
+                            }
                         }
                         Text(
                             "两台手机连同一个 WiFi / 热点就能开打",
@@ -749,6 +792,7 @@ private fun LanEntry(
     text: String,
     modifier: Modifier = Modifier,
     height: androidx.compose.ui.unit.Dp = 46.dp,
+    fontSize: androidx.compose.ui.unit.TextUnit = 14.sp,
     onClick: () -> Unit
 ) {
     val shape = RoundedCornerShape(16.dp)
@@ -764,9 +808,10 @@ private fun LanEntry(
     ) {
         Text(
             text,
-            fontSize = 14.sp,
+            fontSize = fontSize,
             fontWeight = FontWeight.Bold,
-            color = Color(0xFF14427E)
+            color = Color(0xFF14427E),
+            maxLines = 1
         )
     }
 }

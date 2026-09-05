@@ -148,6 +148,9 @@ data class GdMove(
                 3 -> if (counts.size == 1) return GdMove(cs, GdType.TRIO, GdRules.power(others[0].rank, levelRank), 3)
                 4 -> if (counts.size == 1) return GdMove(cs, GdType.BOMB, GdRules.power(others[0].rank, levelRank), 4)
                 5 -> {
+                    // 五张同点 = 炸弹（v21 修复：此前漏识别，领出报"不是有效牌型"、
+                    // AI/提示也只能拆成 4 张出；跟牌路径因生成器直构 GdMove 才没暴露）
+                    if (counts.size == 1) return GdMove(cs, GdType.BOMB, GdRules.power(others[0].rank, levelRank), 5)
                     if (counts.size == 2 && counts.values.sorted() == listOf(2, 3)) {
                         val trio = counts.filterValues { it == 3 }.keys.first()
                         return GdMove(cs, GdType.TRIO_PAIR, GdRules.power(trio, levelRank), 5)

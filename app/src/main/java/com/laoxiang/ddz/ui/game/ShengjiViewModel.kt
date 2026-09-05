@@ -6,15 +6,21 @@ import androidx.lifecycle.viewModelScope
 import com.laoxiang.ddz.LaoXiangApp
 import com.laoxiang.ddz.audio.VoiceMap
 import com.laoxiang.ddz.data.*
+import com.laoxiang.ddz.net.NetLobby
+import com.laoxiang.ddz.net.NetMsg
+import com.laoxiang.ddz.net.netJson
 import com.laoxiang.ddz.util.Prefs
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlin.random.Random
 
 /**
  * 升级（拖拉机）视图模型：单机 vs AI（4人 2v2），多副牌连续对局。
  * V2：慢速发牌 + 定主（亮主/反主）竞标，庄家自动扣底。
+ * v20：支持本地联机（HOST=房主权威 / CLIENT=回显快照）。
  */
 class ShengjiViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -29,13 +35,89 @@ class ShengjiViewModel(app: Application) : AndroidViewModel(app) {
     /** 提示信息（扣底等） */
     val notice = MutableStateFlow<String?>(null)
 
+    /** 游戏模式（v20） */
+    val mode = MutableStateFlow(GameMode.SINGLE)
+
+    /** 我的座位（联机由房主分配；单机恒 0） */
+    val mySeat = MutableStateFlow(0)
+
+    /** 联机操作未送达提示 */
+    val opNotice = MutableStateFlow<String?>(null)
+
+    fun clearOpNotice() { opNotice.value = null }
+
     private val engine = ShengjiEngine()
     private var hintIndex = -1
     private val bidJobs = ArrayList<kotlinx.coroutines.Job>()
     private var settledHand = -1
     private var buryJob: kotlinx.coroutines.Job? = null
 
+    // ------------------------------------------------ 联机绑定（v20）
+
+    private val netJobs = ArrayList<kotlinx.coroutines.Job>()
+    private var netBound = false
+
+    /** 进入联机对局页前调用（幂等） */
+    fun bindNet() {
+        if (netBound) return
+        netBound = true
+        mode.value = if (NetLobby.isHost && NetLobby.activeGame == "shengji") GameMode.HOST else GameMode.CLIENT
+        mySeat.value = NetLobby.mySeat.value
+        netJobs += NetLobby.mySeat.onEach { mySeat.value = it }.launchIn(viewModelScope)
+        netJobs += NetLobby.gSnapshot.onEach { msg ->
+            if (msg?.game != "shengji") return@onEach
+            val snap = runCatching {
+                netJson.decodeFromJsonElement(SjSnapshot.serializer(), msg.payload)
+            }.getOrNull() ?: return@onEach
+            snapshot.value = snap
+            msg.effects.forEach { emitEffect(it) }
+            handleScore()
+        }.launchIn(viewModelScope)
+        netJobs += NetLobby.chatFlow.onEach { c ->
+            c?.let { (_, _, code) -> VoiceMap.forChat(code)?.let { sound.play(it, 0.95f) } }
+        }.launchIn(viewModelScope)
+    }
+
+    private fun emitEffect(e: NetMsg.Effect) {
+        when (e.type) {
+            "shuffle" -> emit(Fx.Shuffle)
+            "played" -> emit(Fx.Played(e.seat))
+            "game_over" -> emit(
+                Fx.GameOver(
+                    landlordWon = e.landlordWon == (gdTeamOf(mySeat.value) == GdTeam.A),
+                    spring = false
+                )
+            )
+        }
+    }
+
+    private fun awaitEcho(what: String, before: SjSnapshot, resend: () -> Unit) {
+        if (mode.value != GameMode.CLIENT) return
+        viewModelScope.launch {
+            val first = withTimeoutOrNull(2500) {
+                snapshot.first { s -> s != null && echoChanged(before, s) }
+            }
+            if (first != null) return@launch
+            resend()
+            val second = withTimeoutOrNull(2200) {
+                snapshot.first { s -> s != null && echoChanged(before, s) }
+            }
+            if (second == null) opNotice.value = "网络不稳定，$what 没有送达，请稍候再试"
+        }
+    }
+
+    private fun echoChanged(before: SjSnapshot, s: SjSnapshot): Boolean =
+        s.phase != before.phase || s.turn != before.turn || s.handNo != before.handNo ||
+                s.claimSeat != before.claimSeat || s.claimTier != before.claimTier ||
+                s.claimNT != before.claimNT || s.dealer != before.dealer ||
+                s.trickPlays.size != before.trickPlays.size ||
+                s.seats.any { sv ->
+                    before.seats.firstOrNull { it.seat == sv.seat }?.handCount != sv.handCount
+                }
+
     fun start() {
+        mode.value = GameMode.SINGLE
+        mySeat.value = 0
         selected.value = emptySet()
         hintIndex = -1
         val level = when (prefs.aiLevel) { 0 -> AiLevel.EASY; 2 -> AiLevel.HARD; else -> AiLevel.MEDIUM }
@@ -55,10 +137,14 @@ class ShengjiViewModel(app: Application) : AndroidViewModel(app) {
     fun nextHand() {
         selected.value = emptySet()
         hintIndex = -1
-        if (engine.nextHandIfPossible()) {
-            settledHand = -1
-            publish(effects = true)
-            scheduleBidding()
+        when (mode.value) {
+            GameMode.SINGLE -> if (engine.nextHandIfPossible()) {
+                settledHand = -1
+                publish(effects = true)
+                scheduleBidding()
+            }
+            GameMode.HOST -> NetLobby.hostNextHand()
+            GameMode.CLIENT -> NetLobby.sendNextHand()
         }
     }
 
@@ -86,8 +172,21 @@ class ShengjiViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 玩家亮主：suit=null 亮无主（需对王） */
+    /** 玩家亮主：suit=null 亮无主（需对王）；联机时路由到房主 */
     fun claimTrump(suit: CardSuit?): String? {
+        when (mode.value) {
+            GameMode.HOST -> {
+                NetLobby.hostClaim(suit)
+                return null
+            }
+            GameMode.CLIENT -> {
+                val snap = snapshot.value ?: return "尚未开局"
+                NetLobby.sendClaim(suit)
+                awaitEcho(if (suit == null) "亮无主" else "亮主", snap) { NetLobby.sendClaim(suit) }
+                return null
+            }
+            GameMode.SINGLE -> {}
+        }
         if (engine.phase != Phase.BIDDING) return "现在不能亮主"
         if (engine.claimSeat == 0) return "你已亮主，等待更高反主"
         engine.events.clear()
@@ -98,8 +197,17 @@ class ShengjiViewModel(app: Application) : AndroidViewModel(app) {
         return null
     }
 
-    /** 发牌揭示完毕：留出末段亮主窗口后定主，庄家捡底 → 进入扣底阶段 */
+    /** 发牌揭示完毕：留出末段亮主窗口后定主，庄家捡底 → 进入扣底阶段
+     *  （联机：房主端驱动定主；客户端无需动作，房主侧有兑底定时器） */
     fun settleBidding() {
+        when (mode.value) {
+            GameMode.HOST -> {
+                NetLobby.hostSettle()
+                return
+            }
+            GameMode.CLIENT -> return
+            GameMode.SINGLE -> {}
+        }
         if (engine.phase != Phase.BIDDING || settledHand == engine.handNo) return
         settledHand = engine.handNo
         viewModelScope.launch {
@@ -136,15 +244,32 @@ class ShengjiViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 玩家扣底：须恰选 8 张 */
+    /** 玩家扣底：须恰选 8 张（联机：庄是我 → 发牌 id 给房主） */
     fun burySelected(): String? {
-        if (engine.phase != Phase.BURYING) return "现在不能扣底"
-        if (engine.dealer != 0) return "还没轮到你扣底"
         val ids = selected.value
         if (ids.size != 8) return "请选 8 张扣为底牌（已选 ${ids.size}/8）"
         val snap = snapshot.value ?: return "尚未开局"
-        val me = snap.seats.first { it.seat == 0 }
-        val cards = me.hand.filter { it.id in ids }
+        val me = mySeat.value
+        when (mode.value) {
+            GameMode.HOST -> {
+                NetLobby.hostPlay(ids.toList())
+                clearSelection()
+                return null
+            }
+            GameMode.CLIENT -> {
+                if (snap.phase != Phase.BURYING || snap.dealer != me) return "还没轮到你扣底"
+                val idList = ids.toList()
+                NetLobby.sendPlay(idList)
+                awaitEcho("扣底", snap) { NetLobby.sendPlay(idList) }
+                clearSelection()
+                return null
+            }
+            GameMode.SINGLE -> {}
+        }
+        if (engine.phase != Phase.BURYING) return "现在不能扣底"
+        if (engine.dealer != 0) return "还没轮到你扣底"
+        val meView = snap.seats.first { it.seat == 0 }
+        val cards = meView.hand.filter { it.id in ids }
         engine.events.clear()
         if (!engine.buryCards(0, cards)) return "扣底失败，请重试"
         clearSelection()
@@ -153,8 +278,35 @@ class ShengjiViewModel(app: Application) : AndroidViewModel(app) {
         return null
     }
 
-    /** 玩家一键自动扣底 */
+    /** 玩家一键自动扣底（联机：房主端引擎计算后广播） */
     fun autoBury(): String? {
+        when (mode.value) {
+            GameMode.HOST -> {
+                if (snapshot.value?.phase != Phase.BURYING) return "现在不能扣底"
+                NetLobby.hostAutoBury()
+                clearSelection()
+                return null
+            }
+            GameMode.CLIENT -> {
+                val snap = snapshot.value ?: return "尚未开局"
+                if (snap.phase != Phase.BURYING || snap.dealer != mySeat.value) return "现在不能扣底"
+                // 客户端庄：本地用同等策略选 8 张（垫最小非主牌），房主引擎校验
+                val hand = snap.seats.first { it.seat == mySeat.value }.hand
+                val trump = snap.trumpSuit
+                val lr = snap.levelRank
+                val nonTrump = hand.filter { c ->
+                    trump == null || (c.suit != trump && c.suit != CardSuit.JOKER && c.rank != lr)
+                }
+                val pick = (nonTrump.ifEmpty { hand }).sortedBy { it.rank }.take(8)
+                if (pick.size < 8) return "手牌不足 8 张"
+                val idList = pick.map { it.id }
+                NetLobby.sendPlay(idList)
+                awaitEcho("扣底", snap) { NetLobby.sendPlay(idList) }
+                clearSelection()
+                return null
+            }
+            GameMode.SINGLE -> {}
+        }
         if (engine.phase != Phase.BURYING || engine.dealer != 0) return "现在不能扣底"
         engine.events.clear()
         if (!engine.buryCards(0, engine.autoBuryChoice())) return "扣底失败，请重试"
@@ -277,38 +429,55 @@ class ShengjiViewModel(app: Application) : AndroidViewModel(app) {
 
     fun playSelected(): String? {
         val snap = snapshot.value ?: return "尚未开局"
-        if (snap.phase != Phase.PLAYING || snap.turn != 0) return "还没轮到你"
+        if (snap.phase != Phase.PLAYING || snap.turn != mySeat.value) return "还没轮到你"
         val ids = selected.value
         if (ids.isEmpty()) return "请先选牌"
-        val me = snap.seats.first { it.seat == 0 }
-        val cards = me.hand.filter { it.id in ids }
-        if (!snap.trickPlays.any { it.first == 0 } && snap.lastPlay != null &&
+        val meView = snap.seats.first { it.seat == mySeat.value }
+        val cards = meView.hand.filter { it.id in ids }
+        if (!snap.trickPlays.any { it.first == mySeat.value } && snap.lastPlay != null &&
             cards.size != snap.lastPlay!!.count) {
             return "必须出 ${snap.lastPlay!!.count} 张"
         }
-        engine.events.clear()
-        val ok = engine.play(0, cards)
-        if (!ok) {
-            val trump = snap.trumpSuit
-            return if (trump != null && snap.lastPlay != null && snap.lastPlay!!.suit == CardSuit.JOKER &&
-                cards.none { SjRules.isTrump(it, trump, snap.levelRank) })
-                "领出的是主牌，有主须跟主"
-            else
-                "跟牌不合法：有该花色（非主牌）须跟足 ${snap.lastPlay?.count ?: cards.size} 张；无该花色可主杀/垫牌"
+        when (mode.value) {
+            GameMode.SINGLE -> {
+                engine.events.clear()
+                val ok = engine.play(0, cards)
+                if (!ok) {
+                    val trump = snap.trumpSuit
+                    return if (trump != null && snap.lastPlay != null && snap.lastPlay!!.suit == CardSuit.JOKER &&
+                        cards.none { SjRules.isTrump(it, trump, snap.levelRank) })
+                        "领出的是主牌，有主须跟主"
+                    else
+                        "跟牌不合法：有该花色（非主牌）须跟足 ${snap.lastPlay?.count ?: cards.size} 张；无该花色可主杀/垫牌"
+                }
+                clearSelection()
+                publish(effects = true)
+                pumpAi()
+            }
+            GameMode.HOST -> {
+                NetLobby.hostPlay(ids.toList())
+                clearSelection()
+            }
+            GameMode.CLIENT -> {
+                val idList = ids.toList()
+                NetLobby.sendPlay(idList)
+                awaitEcho("出牌", snap) { NetLobby.sendPlay(idList) }
+                clearSelection()
+            }
         }
-        clearSelection()
-        publish(effects = true)
-        pumpAi()
         return null
     }
 
     fun hint(): String? {
         val snap = snapshot.value ?: return "尚未开局"
-        if (snap.phase != Phase.PLAYING || snap.turn != 0) return "还没轮到你"
-        val hand = snap.seats.first { it.seat == 0 }.hand
+        if (snap.phase != Phase.PLAYING || snap.turn != mySeat.value) return "还没轮到你"
+        val hand = snap.seats.first { it.seat == mySeat.value }.hand
         val t = snap.trumpSuit ?: CardSuit.SPADE
         val lr = snap.levelRank
-        val led = engine.ledPlay()
+        val led = when (mode.value) {
+            GameMode.SINGLE -> engine.ledPlay()
+            else -> snap.lastPlay?.takeIf { snap.trickPlays.none { tp -> tp.first == mySeat.value } }
+        }
         val pick: List<Card>? = if (led == null) {
             ShengjiAi.findTractor(hand, CtxLike(t, lr), trump = false)
                 ?: listOf(hand.first())
@@ -341,25 +510,39 @@ class ShengjiViewModel(app: Application) : AndroidViewModel(app) {
         val r = snap.result ?: return
         if (scoredHand == snap.handNo) return
         scoredHand = snap.handNo
-        val iWon = gdTeamOf(0) == r.winnerTeam
+        val iWon = gdTeamOf(mySeat.value) == r.winnerTeam
         lastScore.value = if (iWon) (r.upgrade + 1) * 10 else -(r.upgrade * 10 + 10)
-        prefs.addResult(iWon, lastScore.value)
+        if (mode.value == GameMode.SINGLE || mode.value == GameMode.HOST) {
+            prefs.addResult(iWon, lastScore.value)
+        }
     }
 
     fun exitGame() {
+        if (mode.value != GameMode.SINGLE) {
+            netJobs.forEach { it.cancel() }
+            netJobs.clear()
+            netBound = false
+            NetLobby.leave()
+        }
         bidJobs.forEach { it.cancel() }
         bidJobs.clear()
         buryJob?.cancel()
         buryJob = null
+        mode.value = GameMode.SINGLE
+        mySeat.value = 0
+        scoredHand = -1
         sound.stopBgm()
         snapshot.value = null
         selected.value = emptySet()
     }
 
-    /** 单机局快捷喊话：本地播语音（气泡由界面层显示） */
+    /** 快捷喊话：单机本地播语音；联机走 NetLobby（气泡由界面层显示） */
     fun localChat(phrase: String) {
         val code = CHAT_PHRASES.indexOf(phrase) + 1
-        VoiceMap.forChat(code)?.let { sound.play(it, 1f) }
+        when (mode.value) {
+            GameMode.SINGLE -> VoiceMap.forChat(code)?.let { sound.play(it, 1f) }
+            else -> NetLobby.chat(phrase, code)
+        }
     }
 
     fun sfx(key: String, vol: Float = 1f) = sound.play(key, vol)

@@ -70,6 +70,11 @@ android {
         unitTests.isReturnDefaultValues = true
     }
 }
+tasks.withType<Test> {
+    testLogging {
+        events("started", "passed", "failed", "skipped", "standard_out", "standard_error")
+    }
+}
 
 dependencies {
     implementation(libs.androidx.core.ktx)

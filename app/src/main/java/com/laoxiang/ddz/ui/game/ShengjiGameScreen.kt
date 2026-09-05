@@ -59,15 +59,17 @@ fun ShengjiGameScreen(vm: ShengjiViewModel, onExit: () -> Unit) {
         return
     }
 
-    val me = snap.seats[0]
-    val right = snap.seats[1]
-    val top = snap.seats[2]
-    val left = snap.seats[3]
+    val mySeat by vm.mySeat.collectAsState()
+    // 按 mySeat 旋转：右=下家(+1)、顶=对家(+2)、左=上家(+3)
+    val me = snap.seats[mySeat.coerceIn(0, 3)]
+    val right = snap.seats[(mySeat + 1) % 4]
+    val top = snap.seats[(mySeat + 2) % 4]
+    val left = snap.seats[(mySeat + 3) % 4]
 
-    val myTurn = snap.phase == Phase.PLAYING && snap.turn == 0
+    val myTurn = snap.phase == Phase.PLAYING && snap.turn == mySeat
     val bidding = snap.phase == Phase.BIDDING
     val burying = snap.phase == Phase.BURYING
-    val myBurying = burying && snap.dealer == 0
+    val myBurying = burying && snap.dealer == mySeat
     val selCards by vm.selected.collectAsState()
     val selBuryCount = selCards.size
 
@@ -84,10 +86,20 @@ fun ShengjiGameScreen(vm: ShengjiViewModel, onExit: () -> Unit) {
         if (toast != null) { delay(2000); toast = null }
     }
 
+    // 联机操作未送达提示（v20）
+    LaunchedEffect(Unit) {
+        vm.opNotice.collect { t ->
+            if (t != null) {
+                toast = System.nanoTime() to t
+                vm.clearOpNotice()
+            }
+        }
+    }
+
     // 亮主播报：任何一家亮主/反主 → 冒泡提示
     LaunchedEffect(snap.handNo, snap.claimSeat, snap.claimTier) {
         if (bidding && snap.claimSeat >= 0) {
-            val who = if (snap.claimSeat == 0) "你" else snap.seats.getOrNull(snap.claimSeat)?.name ?: "?"
+            val who = if (snap.claimSeat == mySeat) "你" else snap.seats.getOrNull(snap.claimSeat)?.name ?: "?"
             val what = when {
                 snap.claimNT -> if (snap.claimTier >= 4) "亮无主（对大王）" else "亮无主（对小王）"
                 snap.claimTier >= 2 -> "反主 ${suitLabel(snap.claimSuit)}（对级牌）"
@@ -199,6 +211,7 @@ fun ShengjiGameScreen(vm: ShengjiViewModel, onExit: () -> Unit) {
             if (showBar) {
                 SjClaimBar(
                     snap = snap,
+                    mySeat = mySeat,
                     myHand = dealHand.ifEmpty { me.hand },
                     onClaim = { suit ->
                         val err = vm.claimTrump(suit)
@@ -407,7 +420,7 @@ fun ShengjiGameScreen(vm: ShengjiViewModel, onExit: () -> Unit) {
                         .padding(horizontal = 30.dp, vertical = 22.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    val iWon = gdTeamOf(0) == r.winnerTeam
+                    val iWon = gdTeamOf(mySeat) == r.winnerTeam
                     Text(
                         if (iWon) "我方胜！" else "对方胜",
                         fontSize = 26.sp, fontWeight = FontWeight.Black,
@@ -456,6 +469,7 @@ fun ShengjiGameScreen(vm: ShengjiViewModel, onExit: () -> Unit) {
 @Composable
 private fun SjClaimBar(
     snap: SjSnapshot,
+    mySeat: Int,
     myHand: List<Card>,
     onClaim: (CardSuit?) -> Unit,
     modifier: Modifier = Modifier
@@ -466,7 +480,7 @@ private fun SjClaimBar(
         .associateWith { s -> myHand.count { it.rank == levelRank && it.suit == s } }
     val jokerCount = myHand.count { it.suit == CardSuit.JOKER }
 
-    val myOptions = if (snap.claimSeat == 0) emptyMap<CardSuit?, Int>() else buildMap<CardSuit?, Int> {
+    val myOptions = if (snap.claimSeat == mySeat) emptyMap<CardSuit?, Int>() else buildMap<CardSuit?, Int> {
         suitCount.forEach { (s, n) ->
             if (n >= 1) put(s, if (n >= 2) 2 else 1)
         }

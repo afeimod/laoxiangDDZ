@@ -92,6 +92,12 @@ object Deck {
         return ids.mapNotNull { id -> deck.getOrNull(id) }
     }
 
+    /** 由 id 列表还原双副牌（掼蛋/升级，id 0..107） */
+    fun doubleByIds(ids: List<Int>): List<Card> {
+        val deck = doubleDeck()
+        return ids.mapNotNull { id -> deck.getOrNull(id) }
+    }
+
     /** 对应 drawable 资源名，如 card_3s / card_10h / card_qs / card_joker_big */
     fun resName(card: Card): String = when (card.suit) {
         CardSuit.JOKER -> if (card.rank == 17) "card_joker_big" else "card_joker_small"

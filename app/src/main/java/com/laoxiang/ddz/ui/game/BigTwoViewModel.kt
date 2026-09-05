@@ -6,14 +6,20 @@ import androidx.lifecycle.viewModelScope
 import com.laoxiang.ddz.LaoXiangApp
 import com.laoxiang.ddz.audio.VoiceMap
 import com.laoxiang.ddz.data.*
+import com.laoxiang.ddz.net.NetLobby
+import com.laoxiang.ddz.net.NetMsg
+import com.laoxiang.ddz.net.netJson
 import com.laoxiang.ddz.util.Prefs
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlin.random.Random
 
 /**
  * 锄大地视图模型：单机 vs AI（4人），结构与 PdkViewModel 平行。
+ * v20：支持本地联机（HOST=房主权威 / CLIENT=回显快照）。
  */
 class BigTwoViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -25,10 +31,81 @@ class BigTwoViewModel(app: Application) : AndroidViewModel(app) {
     val lastScore = MutableStateFlow(0)
     val fx = MutableSharedFlow<Fx>(extraBufferCapacity = 64)
 
+    /** 游戏模式（v20） */
+    val mode = MutableStateFlow(GameMode.SINGLE)
+
+    /** 我的座位（联机由房主分配；单机恒 0） */
+    val mySeat = MutableStateFlow(0)
+
+    /** 联机操作未送达提示 */
+    val opNotice = MutableStateFlow<String?>(null)
+
+    fun clearOpNotice() { opNotice.value = null }
+
     private val engine = BigTwoEngine()
     private var hintIndex = -1
 
+    // ------------------------------------------------ 联机绑定（v20）
+
+    private val netJobs = ArrayList<kotlinx.coroutines.Job>()
+    private var netBound = false
+
+    /** 进入联机对局页前调用（幂等） */
+    fun bindNet() {
+        if (netBound) return
+        netBound = true
+        mode.value = if (NetLobby.isHost && NetLobby.activeGame == "bigtwo") GameMode.HOST else GameMode.CLIENT
+        mySeat.value = NetLobby.mySeat.value
+        netJobs += NetLobby.mySeat.onEach { mySeat.value = it }.launchIn(viewModelScope)
+        netJobs += NetLobby.gSnapshot.onEach { msg ->
+            if (msg?.game != "bigtwo") return@onEach
+            val snap = runCatching {
+                netJson.decodeFromJsonElement(BtSnapshot.serializer(), msg.payload)
+            }.getOrNull() ?: return@onEach
+            snapshot.value = snap
+            msg.effects.forEach { emitEffect(it) }
+            handleScore()
+        }.launchIn(viewModelScope)
+        netJobs += NetLobby.chatFlow.onEach { c ->
+            c?.let { (_, _, code) -> VoiceMap.forChat(code)?.let { sound.play(it, 0.95f) } }
+        }.launchIn(viewModelScope)
+    }
+
+    private fun emitEffect(e: NetMsg.Effect) {
+        when (e.type) {
+            "shuffle" -> emit(Fx.Shuffle)
+            "played" -> emit(Fx.Played(e.seat))
+            "pass" -> emit(Fx.Pass(e.seat))
+            "new_round" -> emit(Fx.NewRound(e.seat))
+            "game_over" -> emit(Fx.GameOver(landlordWon = e.seat == mySeat.value, spring = false))
+        }
+    }
+
+    private fun awaitEcho(what: String, before: BtSnapshot, resend: () -> Unit) {
+        if (mode.value != GameMode.CLIENT) return
+        viewModelScope.launch {
+            val first = withTimeoutOrNull(2500) {
+                snapshot.first { s -> s != null && echoChanged(before, s) }
+            }
+            if (first != null) return@launch
+            resend()
+            val second = withTimeoutOrNull(2200) {
+                snapshot.first { s -> s != null && echoChanged(before, s) }
+            }
+            if (second == null) opNotice.value = "网络不稳定，$what 没有送达，请稍候再试"
+        }
+    }
+
+    private fun echoChanged(before: BtSnapshot, s: BtSnapshot): Boolean =
+        s.phase != before.phase || s.turn != before.turn || s.round != before.round ||
+                s.lastMoveSeat != before.lastMoveSeat ||
+                s.seats.any { sv ->
+                    before.seats.firstOrNull { it.seat == sv.seat }?.handCount != sv.handCount
+                }
+
     fun start() {
+        mode.value = GameMode.SINGLE
+        mySeat.value = 0
         selected.value = emptySet()
         hintIndex = -1
         val level = when (prefs.aiLevel) { 0 -> AiLevel.EASY; 2 -> AiLevel.HARD; else -> AiLevel.MEDIUM }
@@ -139,42 +216,66 @@ class BigTwoViewModel(app: Application) : AndroidViewModel(app) {
 
     fun playSelected(): String? {
         val snap = snapshot.value ?: return "尚未开局"
-        if (snap.phase != Phase.PLAYING || snap.turn != 0) return "还没轮到你"
+        val me = mySeat.value
+        if (snap.phase != Phase.PLAYING || snap.turn != me) return "还没轮到你"
         val ids = selected.value
         if (ids.isEmpty()) return "请先选牌"
-        val me = snap.seats.first { it.seat == 0 }
-        val cards = me.hand.filter { it.id in ids }
+        val meView = snap.seats.first { it.seat == me }
+        val cards = meView.hand.filter { it.id in ids }
         val move = BtMove.of(cards) ?: return "不是有效牌型"
         if (!move.beats(snap.lastMove)) return "压不过上家"
-        if (!firstLeadDone() && cards.none { it.rank == 3 && it.suit == CardSuit.DIAMOND }) {
+        if (snap.playedRanks.values.all { it == 0 } &&
+            cards.none { it.rank == 3 && it.suit == CardSuit.DIAMOND }) {
             return "第一手必须带方块3"
         }
-        engine.events.clear()
-        if (!engine.play(0, cards)) return "出牌无效"
-        clearSelection()
-        publish(effects = true)
-        pumpAi()
+        when (mode.value) {
+            GameMode.SINGLE -> {
+                engine.events.clear()
+                if (!engine.play(0, cards)) return "出牌无效"
+                clearSelection()
+                publish(effects = true)
+                pumpAi()
+            }
+            GameMode.HOST -> {
+                NetLobby.hostPlay(ids.toList())
+                clearSelection()
+            }
+            GameMode.CLIENT -> {
+                val idList = ids.toList()
+                NetLobby.sendPlay(idList)
+                awaitEcho("出牌", snap) { NetLobby.sendPlay(idList) }
+                clearSelection()
+            }
+        }
         return null
     }
 
-    private fun firstLeadDone(): Boolean = engine.players.any { it.played.isNotEmpty() }
-
     fun passTurn(): String? {
         val snap = snapshot.value ?: return "尚未开局"
-        if (snap.phase != Phase.PLAYING || snap.turn != 0) return "还没轮到你"
+        if (snap.phase != Phase.PLAYING || snap.turn != mySeat.value) return "还没轮到你"
         if (snap.lastMove == null) return "轮到你先出"
-        engine.events.clear()
-        if (!engine.pass(0)) return "不能过牌"
+        when (mode.value) {
+            GameMode.SINGLE -> {
+                engine.events.clear()
+                if (!engine.pass(0)) return "不能过牌"
+                clearSelection()
+                publish(effects = true)
+                pumpAi()
+            }
+            GameMode.HOST -> NetLobby.hostPass()
+            GameMode.CLIENT -> {
+                NetLobby.sendPass()
+                awaitEcho("不出", snap) { NetLobby.sendPass() }
+            }
+        }
         clearSelection()
-        publish(effects = true)
-        pumpAi()
         return null
     }
 
     fun hint(): String? {
         val snap = snapshot.value ?: return "尚未开局"
-        if (snap.phase != Phase.PLAYING || snap.turn != 0) return "还没轮到你"
-        val hand = snap.seats.first { it.seat == 0 }.hand
+        if (snap.phase != Phase.PLAYING || snap.turn != mySeat.value) return "还没轮到你"
+        val hand = snap.seats.first { it.seat == mySeat.value }.hand
         val all: List<List<Card>> = if (snap.lastMove == null) {
             // 领出提示：最小单张
             listOf(listOf(hand.minBy { it.rank }))
@@ -188,28 +289,51 @@ class BigTwoViewModel(app: Application) : AndroidViewModel(app) {
         return null
     }
 
+    /** 结算后再来一局（联机走网络重开；单机原地重开） */
+    fun again() {
+        when (mode.value) {
+            GameMode.SINGLE -> start()
+            GameMode.HOST -> NetLobby.hostRestart()
+            GameMode.CLIENT -> NetLobby.sendRestart()
+        }
+    }
+
     private var scoredRound = -1
     private fun handleScore() {
         val snap = snapshot.value ?: return
         val r = snap.result ?: return
         if (scoredRound == snap.round) return
         scoredRound = snap.round
-        val myDelta = r.scoreDelta[0] ?: 0
+        val myDelta = r.scoreDelta[mySeat.value] ?: 0
         lastScore.value = myDelta
-        prefs.addResult(myDelta > 0, myDelta)
+        if (mode.value == GameMode.SINGLE || mode.value == GameMode.HOST) {
+            prefs.addResult(myDelta > 0, myDelta)
+        }
     }
 
     fun exitGame() {
+        if (mode.value != GameMode.SINGLE) {
+            netJobs.forEach { it.cancel() }
+            netJobs.clear()
+            netBound = false
+            NetLobby.leave()
+        }
+        mode.value = GameMode.SINGLE
+        mySeat.value = 0
+        scoredRound = -1
         sound.stopBgm()
         snapshot.value = null
         selected.value = emptySet()
     }
 
 
-    /** 单机局快捷喊话：本地播语音（气泡由界面层显示） */
+    /** 快捷喊话：单机本地播语音；联机走 NetLobby（气泡由界面层显示） */
     fun localChat(phrase: String) {
         val code = CHAT_PHRASES.indexOf(phrase) + 1
-        VoiceMap.forChat(code)?.let { sound.play(it, 1f) }
+        when (mode.value) {
+            GameMode.SINGLE -> VoiceMap.forChat(code)?.let { sound.play(it, 1f) }
+            else -> NetLobby.chat(phrase, code)
+        }
     }
 
     fun sfx(key: String, vol: Float = 1f) = sound.play(key, vol)
