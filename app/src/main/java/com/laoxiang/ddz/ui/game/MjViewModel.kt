@@ -23,6 +23,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
@@ -503,12 +504,12 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
         if (mode.value != GameMode.CLIENT) return
         viewModelScope.launch {
             val first = withTimeoutOrNull(2500) {
-                snapshot.first { s -> s != null && (s.phase != before.phase || s.turn != before.turn || s.wallCount != before.wallCount || s.seats.any { sv -> before.seats.firstOrNull { it.seat == sv.seat }?.handCount != sv.handCount }) }
+                snapshot.first { s: MjSnapshot? -> s != null && (s.phase != before.phase || s.turn != before.turn || s.wallCount != before.wallCount || s.seats.any { sv -> before.seats.firstOrNull { b -> b.seat == sv.seat }?.handCount != sv.handCount }) }
             }
             if (first != null) return@launch
             resend()
             val second = withTimeoutOrNull(2200) {
-                snapshot.first { s -> s != null && s.seats.any { sv -> before.seats.firstOrNull { it.seat == sv.seat }?.handCount != sv.handCount } }
+                snapshot.first { s: MjSnapshot? -> s != null && s.seats.any { sv -> before.seats.firstOrNull { b -> b.seat == sv.seat }?.handCount != sv.handCount } }
             }
             if (second == null) opNotice.value = "网络不稳定，$what 没有送达，请稍候再试"
         }
