@@ -100,7 +100,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFF0F3D2E))
+            .background(Color(0xFF0E4A38))
     ) {
         TableBackground(
             bgKey = vm.prefs.tableBg,
