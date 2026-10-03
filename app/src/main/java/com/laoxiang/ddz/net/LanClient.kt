@@ -146,6 +146,10 @@ class LanClient(
     /** 掼蛋/升级：开下一副 */
     fun nextHand() = send(NetMsg.NextHand)
 
+    /** 麻将操作（v22） */
+    fun mjAct(action: String, tileIds: List<Int>, extra: Int) =
+        send(NetMsg.MjAct(action, tileIds, extra))
+
     /** 跑得快/锄大地：再来一局 */
     fun restart() = send(NetMsg.Restart)
 

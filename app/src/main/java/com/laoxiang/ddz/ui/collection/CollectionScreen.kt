@@ -23,11 +23,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.laoxiang.ddz.R
+import com.laoxiang.ddz.data.MjMode
 import com.laoxiang.ddz.data.PdkMode
 import com.laoxiang.ddz.ui.theme.Gold
 
 /**
- * 棋牌合集：斗地主 / 跑得快（三人·四人）/ 锄大地 / 掼蛋 / 升级。
+ * 棋牌合集：斗地主 / 跑得快（三人·四人）/ 锄大地 / 掼蛋 / 升级 / 麻将三件套。
  */
 @Composable
 fun CollectionScreen(
@@ -36,7 +37,8 @@ fun CollectionScreen(
     onPlayPdk: (PdkMode) -> Unit,
     onPlayBigTwo: () -> Unit = {},
     onPlayGuandan: () -> Unit = {},
-    onPlayShengji: () -> Unit = {}
+    onPlayShengji: () -> Unit = {},
+    onPlayMj: (MjMode) -> Unit = {}
 ) {
     Box(
         Modifier
@@ -187,6 +189,51 @@ fun CollectionScreen(
                     desc = "80分 · 抠底翻倍 · 拖拉机 · A必打",
                     onClick = onPlayShengji
                 )
+                GameCard(
+                    icon = {
+                        Image(
+                            painter = painterResource(R.drawable.mj_icon),
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.height(62.dp)
+                        )
+                    },
+                    title = "大众麻将",
+                    badge = "新上架",
+                    badgeColor = Color(0xFF00695C),
+                    desc = "带番推倒胡 · 吃碰杠 · 清一色8番 · 一炮多响",
+                    onClick = { onPlayMj(MjMode.DAZHONG) }
+                )
+                GameCard(
+                    icon = {
+                        Image(
+                            painter = painterResource(R.drawable.mj_icon),
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.height(62.dp)
+                        )
+                    },
+                    title = "癞子麻将",
+                    badge = "火爆",
+                    badgeColor = Color(0xFFC62828),
+                    desc = "红中癞子 · 不可打癞子 · 癞子翻番 · 胡牌更炸",
+                    onClick = { onPlayMj(MjMode.LAIZI) }
+                )
+                GameCard(
+                    icon = {
+                        Image(
+                            painter = painterResource(R.drawable.mj_icon),
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.height(62.dp)
+                        )
+                    },
+                    title = "四川麻将",
+                    badge = "血战",
+                    badgeColor = Color(0xFFAD1457),
+                    desc = "血战到底 · 定缺换三张 · 只自摸 · 刮风下雨",
+                    onClick = { onPlayMj(MjMode.SICHUAN) }
+                )
                 // 敬请期待
                 Row(
                     Modifier
@@ -207,7 +254,7 @@ fun CollectionScreen(
                             color = Color(0xB3FFFFFF)
                         )
                         Text(
-                            "斗地主 / 跑得快 / 锄大地 / 掼蛋 / 升级，已集齐！",
+                            "斗地主 / 跑得快 / 锄大地 / 掼蛋 / 升级 / 麻将三件套，已集齐！",
                             fontSize = 10.sp, color = Color(0x80FFFFFF)
                         )
                     }

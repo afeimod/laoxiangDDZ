@@ -35,6 +35,18 @@ object GameDrivers {
             check(seatCount == 4) { "锄大地需要4名玩家" }
             BigTwoDriver(gameScope, trigger)
         }
+        "mjdazhong" -> {
+            check(seatCount == 4) { "麻将需要4名玩家" }
+            MjDriver(MjMode.DAZHONG, gameScope, trigger)
+        }
+        "mjlaizi" -> {
+            check(seatCount == 4) { "麻将需要4名玩家" }
+            MjDriver(MjMode.LAIZI, gameScope, trigger)
+        }
+        "mjsichuan" -> {
+            check(seatCount == 4) { "麻将需要4名玩家" }
+            MjDriver(MjMode.SICHUAN, gameScope, trigger)
+        }
         else -> throw IllegalArgumentException("未知游戏：$gameId")
     }
 }

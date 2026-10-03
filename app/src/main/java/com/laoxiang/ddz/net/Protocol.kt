@@ -79,6 +79,16 @@ sealed interface NetMsg {
     @SerialName("restart")
     object Restart : NetMsg
 
+    /** 麻将操作（v22）：discard/hu/peng/gang/chi/gang_an/gang_bu/pass/dingque/swap3 */
+    @Serializable
+    @SerialName("mjact")
+    data class MjAct(
+        val action: String,
+        val tileIds: List<Int> = emptyList(),
+        /** chi 中间张 code / dingque 花色 / 暗杠 code */
+        val extra: Int = -1
+    ) : NetMsg
+
     // ---------------- 房主 → 客户端 ----------------
 
     @Serializable

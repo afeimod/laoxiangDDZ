@@ -48,7 +48,10 @@ val NET_GAMES = listOf(
     NetGameDef("shengji", "升级", 4),
     NetGameDef("pdk3", "跑得快·3人", 3),
     NetGameDef("pdk4", "跑得快·4人", 4),
-    NetGameDef("bigtwo", "锄大地", 4)
+    NetGameDef("bigtwo", "锄大地", 4),
+    NetGameDef("mjdazhong", "大众麻将", 4),
+    NetGameDef("mjlaizi", "癞子麻将", 4),
+    NetGameDef("mjsichuan", "四川麻将", 4)
 )
 
 /** 选择值 → (引擎游戏 id, 座位数) */
@@ -64,5 +67,8 @@ fun gameLabelOf(game: String, seats: Int): String = when (game) {
     "shengji" -> "升级"
     "pdk" -> if (seats == 3) "跑得快·3人" else "跑得快·4人"
     "bigtwo" -> "锄大地"
+    "mjdazhong" -> "大众麻将"
+    "mjlaizi" -> "癞子麻将"
+    "mjsichuan" -> "四川麻将"
     else -> "斗地主"
 }

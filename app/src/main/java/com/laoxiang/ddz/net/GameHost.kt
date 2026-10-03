@@ -37,6 +37,9 @@ class GameHost(
             "shengji" -> "老乡升级房间"
             "pdk" -> "老乡跑得快房间"
             "bigtwo" -> "老乡锄大地房间"
+            "mjdazhong" -> "老乡大众麻将房间"
+            "mjlaizi" -> "老乡癞子麻将房间"
+            "mjsichuan" -> "老乡四川麻将房间"
             else -> "老乡斗地主房间"
         }
     }
@@ -236,6 +239,9 @@ class GameHost(
             is NetMsg.Restart -> onGameThread {
                 doAction { driver.restart() }
             }
+            is NetMsg.MjAct -> onGameThread {
+                doAction { driver.mjAct(seat, msg.action, msg.tileIds, msg.extra) }
+            }
             is NetMsg.Chat -> relayChat(seat, msg.text, msg.sound)
             is NetMsg.Ping -> sendToClient(seat, NetMsg.Pong)
             else -> {}
@@ -273,6 +279,8 @@ class GameHost(
     fun hostPlay(ids: List<Int>) = onGameThread { doAction { driver.play(0, ids) } }
     fun hostPass() = onGameThread { doAction { driver.pass(0) } }
     fun hostClaim(suit: CardSuit?) = onGameThread { doAction { driver.claim(0, suit) } }
+    fun hostMjAct(action: String, ids: List<Int>, extra: Int) =
+        onGameThread { doAction { driver.mjAct(0, action, ids, extra) } }
     fun hostNextHand() = onGameThread { doAction { driver.nextHand() } }
     fun hostRestart() = onGameThread { doAction { driver.restart() } }
     fun hostSettle() = onGameThread { doAction { driver.settle() } }
@@ -368,6 +376,9 @@ interface HostDriver {
     fun play(seat: Int, ids: List<Int>): Boolean
     fun pass(seat: Int): Boolean
     fun claim(seat: Int, suit: CardSuit?): Boolean
+
+    /** 麻将操作（v22：discard/hu/peng/gang/chi/gang_an/gang_bu/pass/dingque/swap3） */
+    fun mjAct(seat: Int, action: String, ids: List<Int>, extra: Int): Boolean = false
 
     /** 副间推进 / 重开一局（引擎幂等，条件不满足返回 false） */
     fun nextHand(): Boolean

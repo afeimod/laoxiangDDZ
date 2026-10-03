@@ -16,6 +16,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.laoxiang.ddz.data.MjMode
 import com.laoxiang.ddz.data.PdkMode
 import com.laoxiang.ddz.net.NetLobby
 import com.laoxiang.ddz.net.RoomBroadcast
@@ -25,6 +26,8 @@ import com.laoxiang.ddz.ui.game.BigTwoViewModel
 import com.laoxiang.ddz.ui.game.GameMode
 import com.laoxiang.ddz.ui.game.GameScreen
 import com.laoxiang.ddz.ui.game.GameViewModel
+import com.laoxiang.ddz.ui.game.MjGameScreen
+import com.laoxiang.ddz.ui.game.MjViewModel
 import com.laoxiang.ddz.ui.game.GuandanGameScreen
 import com.laoxiang.ddz.ui.game.GuandanViewModel
 import com.laoxiang.ddz.ui.game.PdkGameScreen
@@ -82,7 +85,7 @@ class MainActivity : ComponentActivity() {
 }
 
 /** 简单路由（与 Application 类 LaoXiangApp 同名会冲突，故叫 Root） */
-private enum class Page { LOBBY, ROOM, GAME, COLLECTION, PDK, BIGTWO, GUANDAN, SHENGJI }
+private enum class Page { LOBBY, ROOM, GAME, COLLECTION, PDK, BIGTWO, GUANDAN, SHENGJI, MAHJONG }
 
 @Composable
 fun LaoXiangRoot() {
@@ -91,6 +94,7 @@ fun LaoXiangRoot() {
     val btVm: BigTwoViewModel = viewModel()
     val gdVm: GuandanViewModel = viewModel()
     val sjVm: ShengjiViewModel = viewModel()
+    val mjVm: MjViewModel = viewModel()
     var page by remember { mutableStateOf(Page.LOBBY) }
     // 当前房间页归属："ddz"=斗地主原链路；"net"=NetLobby（跨游戏浏览/非斗地主房间）
     var roomOwner by remember { mutableStateOf("net") }
@@ -132,6 +136,7 @@ fun LaoXiangRoot() {
             "shengji" -> { sjVm.bindNet(); page = Page.SHENGJI }
             "pdk" -> { pdkVm.bindNet(); page = Page.PDK }
             "bigtwo" -> { btVm.bindNet(); page = Page.BIGTWO }
+            "mjdazhong", "mjlaizi", "mjsichuan" -> { mjVm.bindNet(); page = Page.MAHJONG }
         }
     }
 
@@ -172,6 +177,10 @@ fun LaoXiangRoot() {
             onPlayShengji = {
                 sjVm.start()
                 page = Page.SHENGJI
+            },
+            onPlayMj = { m ->
+                mjVm.start(m)
+                page = Page.MAHJONG
             }
         )
         page == Page.BIGTWO -> BigTwoGameScreen(
@@ -192,6 +201,13 @@ fun LaoXiangRoot() {
             vm = sjVm,
             onExit = {
                 sjVm.exitGame()
+                page = Page.LOBBY
+            }
+        )
+        page == Page.MAHJONG -> MjGameScreen(
+            vm = mjVm,
+            onExit = {
+                mjVm.exitGame()
                 page = Page.LOBBY
             }
         )

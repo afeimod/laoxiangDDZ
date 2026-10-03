@@ -4,6 +4,7 @@ import com.laoxiang.ddz.data.BtMove
 import com.laoxiang.ddz.data.BtType
 import com.laoxiang.ddz.data.GdMove
 import com.laoxiang.ddz.data.GdType
+import com.laoxiang.ddz.data.MjTile
 import com.laoxiang.ddz.data.Move
 import com.laoxiang.ddz.data.MoveType
 import com.laoxiang.ddz.data.SjPlay
@@ -122,6 +123,49 @@ object VoiceMap {
     /** 快捷喊话序号（1..8）→ 语音 key */
     fun forChat(code: Int): String? = if (code in 1..8) "voice_chat$code" else null
 
+    // ================================ 麻将（v22）
+
+    /** 麻将牌张 → 语音 key（女声：一万~九万/一筒~九筒/一条~九条/东南西北/红中发财白板） */
+    fun forMjTile(t: MjTile): String = when (t.suit) {
+        com.laoxiang.ddz.data.MjSuit.WAN -> "voice_mj_w${t.num}"
+        com.laoxiang.ddz.data.MjSuit.TONG -> "voice_mj_t${t.num}"
+        com.laoxiang.ddz.data.MjSuit.TIAO -> "voice_mj_b${t.num}"
+        com.laoxiang.ddz.data.MjSuit.ZI -> when (t.num) {
+            1 -> "voice_mj_f1"; 2 -> "voice_mj_f2"; 3 -> "voice_mj_f3"; 4 -> "voice_mj_f4"
+            5 -> "voice_mj_zh"; 6 -> "voice_mj_fa"; else -> "voice_mj_ba"
+        }
+    }
+
+    /** 麻将宣告动作 → 语音 key（男声：吃/碰/杠/胡了） */
+    fun forMjAction(kind: String): String? = when (kind) {
+        "CHI" -> "voice_mj_chi"
+        "PENG" -> "voice_mj_peng"
+        "GANG" -> "voice_mj_gang"
+        "HU" -> "voice_mj_hu"
+        else -> null
+    }
+
+    /** 麻将番型 → 语音 key（男声报番） */
+    fun forMjFan(fan: String): String? = when {
+        fan.startsWith("清一色") -> "voice_mj_fan_qing"
+        fan.startsWith("混一色") -> "voice_mj_fan_hun"
+        fan.startsWith("对对") -> "voice_mj_fan_dd"
+        fan.startsWith("豪华七对") || fan.startsWith("龙七对") -> "voice_mj_fan_l7"
+        fan.startsWith("七对") -> "voice_mj_fan_7"
+        fan.startsWith("十三幺") -> "voice_mj_fan_13"
+        fan.startsWith("杠上") -> "voice_mj_fan_gs"
+        fan.startsWith("海底") -> "voice_mj_fan_hd"
+        fan.startsWith("抢杠") -> "voice_mj_fan_qg"
+        fan.startsWith("大三元") -> "voice_mj_fan_dy"
+        fan.startsWith("小三元") -> "voice_mj_fan_xy"
+        fan.startsWith("金钩钩") -> "voice_mj_fan_jgg"
+        fan.startsWith("十八罗汉") -> "voice_mj_fan_sl"
+        fan.startsWith("天胡") -> "voice_mj_fan_th"
+        fan.startsWith("字一色") -> "voice_mj_fan_zys"
+        fan.startsWith("根") -> "voice_mj_fan_gen"
+        else -> null
+    }
+
     /** SoundManager 启动时批量注册的全部语音资源名 */
     val ALL: List<String> = buildList {
         addAll(
@@ -145,5 +189,22 @@ object VoiceMap {
             )
         )
         addAll((1..8).map { "voice_chat$it" })
+        // 麻将（v22）：27 张牌 + 动作 + 番型
+        addAll((1..9).map { "voice_mj_w$it" })
+        addAll((1..9).map { "voice_mj_t$it" })
+        addAll((1..9).map { "voice_mj_b$it" })
+        addAll((1..4).map { "voice_mj_f$it" })
+        addAll(
+            listOf(
+                "voice_mj_zh", "voice_mj_fa", "voice_mj_ba",
+                "voice_mj_chi", "voice_mj_peng", "voice_mj_gang", "voice_mj_hu",
+                "voice_mj_zimo", "voice_mj_guo", "voice_mj_dingque", "voice_mj_huan3",
+                "voice_mj_liuju", "voice_mj_ting",
+                "voice_mj_fan_qing", "voice_mj_fan_hun", "voice_mj_fan_dd", "voice_mj_fan_7",
+                "voice_mj_fan_l7", "voice_mj_fan_13", "voice_mj_fan_gs", "voice_mj_fan_hd",
+                "voice_mj_fan_qg", "voice_mj_fan_dy", "voice_mj_fan_xy", "voice_mj_fan_jgg",
+                "voice_mj_fan_sl", "voice_mj_fan_th", "voice_mj_fan_zys", "voice_mj_fan_gen"
+            )
+        )
     }
 }

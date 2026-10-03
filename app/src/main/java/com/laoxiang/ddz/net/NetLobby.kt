@@ -29,7 +29,7 @@ import kotlinx.serialization.json.JsonPrimitive
  */
 object NetLobby : com.laoxiang.ddz.ui.room.NetRoomUi {
 
-    /** 当前会话所属游戏：guandan / shengji / pdk / bigtwo；null=无联机会话 */
+    /** 当前会话所属游戏：guandan / shengji / pdk / bigtwo / mj*；null=无联机会话 */
     @Volatile
     var activeGame: String? = null
         private set
@@ -144,7 +144,7 @@ object NetLobby : com.laoxiang.ddz.ui.room.NetRoomUi {
 
     /** 对局是否进行中（房间页据此自动进入对局界面） */
     private fun phaseLive(p: String?): Boolean =
-        p in setOf("BIDDING", "ROBBING", "BURYING", "PLAYING")
+        p in setOf("BIDDING", "ROBBING", "BURYING", "PLAYING", "DINGQUE", "SWAP3")
 
     private fun phaseOf(msg: NetMsg.GSnapshot?): String? {
         val obj = msg?.payload as? JsonObject ?: return null
@@ -227,6 +227,7 @@ object NetLobby : com.laoxiang.ddz.ui.room.NetRoomUi {
     fun hostPlay(ids: List<Int>) { host?.hostPlay(ids) }
     fun hostPass() { host?.hostPass() }
     fun hostClaim(suit: CardSuit?) { host?.hostClaim(suit) }
+    fun hostMjAct(action: String, ids: List<Int>, extra: Int) { host?.hostMjAct(action, ids, extra) }
     fun hostNextHand() { host?.hostNextHand() }
     fun hostRestart() { host?.hostRestart() }
     fun hostSettle() { host?.hostSettle() }
@@ -237,6 +238,9 @@ object NetLobby : com.laoxiang.ddz.ui.room.NetRoomUi {
     fun sendPlay(ids: List<Int>) { client?.play(ids) }
     fun sendPass() { client?.pass() }
     fun sendClaim(suit: CardSuit?) { client?.claim(suit) }
+    fun sendMjAct(action: String, ids: List<Int>, extra: Int) {
+        if (isHost) hostMjAct(action, ids, extra) else client?.mjAct(action, ids, extra)
+    }
     fun sendNextHand() { client?.nextHand() }
     fun sendRestart() { client?.restart() }
 
