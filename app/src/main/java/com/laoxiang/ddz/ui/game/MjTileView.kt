@@ -24,7 +24,7 @@ import com.laoxiang.ddz.data.MjTile
  */
 
 /** code(0..33) -> 牌面贴图：0..8 万 / 9..17 筒 / 18..26 条 / 27..33 东南西北中發白 */
-private fun faceRes(code: Int): Int = when (code) {
+internal fun faceRes(code: Int): Int = when (code) {
     0 -> R.drawable.mj_wan1; 1 -> R.drawable.mj_wan2; 2 -> R.drawable.mj_wan3
     3 -> R.drawable.mj_wan4; 4 -> R.drawable.mj_wan5; 5 -> R.drawable.mj_wan6
     6 -> R.drawable.mj_wan7; 7 -> R.drawable.mj_wan8; 8 -> R.drawable.mj_wan9

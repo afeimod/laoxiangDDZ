@@ -44,19 +44,7 @@ import kotlinx.coroutines.launch
  * 胡碰杠吃圆形素材按钮、定缺三色圆钮、换三张原版按钮；结算/特效/快捷喊话浮层。
  */
 
-/** 出牌卧牌贴图（mj_disc_0..33）与旋转版 */
-private val DISC_RES = intArrayOf(
-    R.drawable.mj_disc_0, R.drawable.mj_disc_1, R.drawable.mj_disc_2, R.drawable.mj_disc_3,
-    R.drawable.mj_disc_4, R.drawable.mj_disc_5, R.drawable.mj_disc_6, R.drawable.mj_disc_7,
-    R.drawable.mj_disc_8, R.drawable.mj_disc_9, R.drawable.mj_disc_10, R.drawable.mj_disc_11,
-    R.drawable.mj_disc_12, R.drawable.mj_disc_13, R.drawable.mj_disc_14, R.drawable.mj_disc_15,
-    R.drawable.mj_disc_16, R.drawable.mj_disc_17, R.drawable.mj_disc_18, R.drawable.mj_disc_19,
-    R.drawable.mj_disc_20, R.drawable.mj_disc_21, R.drawable.mj_disc_22, R.drawable.mj_disc_23,
-    R.drawable.mj_disc_24, R.drawable.mj_disc_25, R.drawable.mj_disc_26, R.drawable.mj_disc_27,
-    R.drawable.mj_disc_28, R.drawable.mj_disc_29, R.drawable.mj_disc_30, R.drawable.mj_disc_31,
-    R.drawable.mj_disc_32, R.drawable.mj_disc_33
-)
-
+/** 左右家横躺出牌贴图（mj_disc_*r：tablemjwh0 横躺牌体 + 正向刻字，由 gen_disc_rot_v2.py 生成） */
 private val DISC_ROT = intArrayOf(
     R.drawable.mj_disc_0r, R.drawable.mj_disc_1r, R.drawable.mj_disc_2r, R.drawable.mj_disc_3r,
     R.drawable.mj_disc_4r, R.drawable.mj_disc_5r, R.drawable.mj_disc_6r, R.drawable.mj_disc_7r,
@@ -287,7 +275,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 Modifier
                     .align(if (isRight) Alignment.TopEnd else Alignment.TopStart)
                     .offset(
-                        x = (if (isRight) -1 else 1) * (edgeX - backW * 0.5f),
+                        x = (edgeX - backW * 0.5f) * (if (isRight) -1 else 1),
                         y = colTop
                     ),
                 verticalArrangement = Arrangement.spacedBy(-backH * 0.56f),
@@ -296,13 +284,13 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 repeat(backs) { MjBackStand(backW) }
             }
             // 副露：立背列下方竖排卧牌（超过 6 张分双列，防溢出屏幕）
-            val backsEnd = colTop + (backs - 1) * backH * 0.44f + backH * 0.5f
+            val backsEnd = colTop + backH * 0.44f * (backs - 1) + backH * 0.5f
             if (seat.melds.isNotEmpty()) {
                 Row(
                     Modifier
                         .align(if (isRight) Alignment.TopEnd else Alignment.TopStart)
                         .offset(
-                            x = (if (isRight) -1 else 1) * (edgeX - discW * 0.35f),
+                            x = (edgeX - discW * 0.35f) * (if (isRight) -1 else 1),
                             y = backsEnd + 10.dp
                         ),
                     horizontalArrangement = Arrangement.spacedBy(3.dp)
@@ -320,7 +308,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 Modifier
                     .align(Alignment.CenterStart)
                     .offset(
-                        x = (if (isRight) -1 else 1) * (frame + wallW * 1.53f + discW * 0.5f),
+                        x = (frame + wallW * 1.53f + discW * 0.5f) * (if (isRight) -1 else 1),
                         y = H * 0.03f
                     ),
                 horizontalArrangement = Arrangement.spacedBy(3.dp)
@@ -737,15 +725,28 @@ internal fun mjGoldBrush(): Brush =
 
 // ================================================================ 素材小部件
 
-/** 出牌卧牌（素材 tablemjwh0 + 原刻字）；rotated=true 用预旋转版（左右家） */
+/**
+ * 出牌：rotated=false 立牌样式（对家/自家牌河、副露，与手牌同贴图，参考图均为正向立牌）；
+ * rotated=true 横躺牌体 + 正向刻字（左右家，参考图刻字不随牌体旋转）
+ */
 @Composable
 internal fun MjDiscTile(code: Int, w: Dp, rotated: Boolean = false) {
-    Image(
-        painter = painterResource(if (rotated) DISC_ROT[code.coerceIn(0, 33)] else DISC_RES[code.coerceIn(0, 33)]),
-        contentDescription = null,
-        contentScale = ContentScale.FillBounds,
-        modifier = Modifier.size(w, w)
-    )
+    if (rotated) {
+        Image(
+            painter = painterResource(DISC_ROT[code.coerceIn(0, 33)]),
+            contentDescription = null,
+            contentScale = ContentScale.FillBounds,
+            modifier = Modifier.size(w, w)
+        )
+    } else {
+        val h = w * 1.38202f
+        Image(
+            painter = painterResource(faceRes(code.coerceIn(0, 33))),
+            contentDescription = null,
+            contentScale = ContentScale.FillBounds,
+            modifier = Modifier.size(w, h)
+        )
+    }
 }
 
 /** 卧牌背（对家手牌，素材 cc1） */
