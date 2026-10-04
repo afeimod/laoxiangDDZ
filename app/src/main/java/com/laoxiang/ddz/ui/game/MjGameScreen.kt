@@ -2,6 +2,7 @@ package com.laoxiang.ddz.ui.game
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,10 +20,13 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.laoxiang.ddz.R
 import com.laoxiang.ddz.data.MjClaimOpt
 import com.laoxiang.ddz.data.MjMeld
 import com.laoxiang.ddz.data.MjPhase
@@ -69,7 +73,8 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
     var toast by remember { mutableStateOf<Pair<Long, String>?>(null) }
     var showChat by remember { mutableStateOf(false) }
     var myBubble by remember { mutableStateOf<Pair<Long, String>?>(null) }
-    var bigText by remember { mutableStateOf("") }
+    // 中央大特效：(时间戳, 素材资源, 附加文字)
+    var bigFx by remember { mutableStateOf<Triple<Long, Int, String>?>(null) }
     val bigScale = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
 
@@ -79,16 +84,28 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         vm.fx.collect { f ->
             when (f) {
                 is MjFx.Claim -> if (f.seat != mySeat) {
-                    bigText = when (f.kind) {
-                        "CHI" -> "吃！"; "PENG" -> "碰！"; else -> "杠！"
-                    }
+                    bigFx = Triple(
+                        System.nanoTime(),
+                        when (f.kind) {
+                            "CHI" -> R.drawable.mj_fx_chi
+                            "PENG" -> R.drawable.mj_fx_peng
+                            else -> R.drawable.mj_fx_gang
+                        },
+                        ""
+                    )
                     flashBig(bigScale)
                 }
                 is MjFx.Hu -> {
-                    bigText = if (f.selfDraw) "自 摸 ！" else "胡 ！"
+                    bigFx = Triple(
+                        System.nanoTime(), R.drawable.mj_fx_hu,
+                        if (f.selfDraw) "自摸" else ""
+                    )
                     flashBig(bigScale)
                 }
-                is MjFx.LiuJu -> { bigText = "流 局"; flashBig(bigScale) }
+                is MjFx.LiuJu -> {
+                    bigFx = Triple(System.nanoTime(), R.drawable.mj_fx_liuju, "")
+                    flashBig(bigScale)
+                }
                 else -> {}
             }
         }
@@ -108,7 +125,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             engraving = if (snap.phase == MjPhase.PLAYING) "老乡麻将" else null
         )
 
-        val tileW = (maxWidth / 11f).coerceAtMost(58.dp)
+        val tileW = (maxWidth / 11f).coerceAtMost(54.dp)
         val smallW = tileW * 0.42f
         val meldW = tileW * 0.55f
 
@@ -250,18 +267,18 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 }
             }
             if (myTurn && snap.awaitingDiscard) {
-                MjPillButton("提 示", mjBlueBrush()) {
+                MjRectButton(R.drawable.mj_btn_hint, 34.dp) {
                     val err = vm.hint()
                     if (err != null) toast = System.nanoTime() to err
                 }
-                MjPillButton("打 出", mjGoldBrush()) {
+                MjRectButton(R.drawable.mj_btn_discard, 34.dp) {
                     val err = vm.discardSelected()
                     if (err != null) toast = System.nanoTime() to err
                 }
             }
             // 换三张确认
             if (snap.phase == MjPhase.SWAP3 && !snap.swapPicked) {
-                MjPillButton("换 三 张", mjGoldBrush()) {
+                MjRectButton(R.drawable.mj_btn_swap3, 34.dp) {
                     val err = vm.confirmSwap()
                     if (err != null) toast = System.nanoTime() to err
                 }
@@ -307,10 +324,19 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        me.name + if (me.isDealer) " (庄)" else "",
+                        me.name,
                         fontSize = 12.sp, fontWeight = FontWeight.Bold,
                         color = if (me.isTurn) Color(0xFFFFE082) else Color.White
                     )
+                    if (me.isDealer) {
+                        Spacer(Modifier.width(3.dp))
+                        Image(
+                            painter = painterResource(R.drawable.mj_mark_zhuang),
+                            contentDescription = "庄家",
+                            contentScale = ContentScale.FillBounds,
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
                     if (me.dingque >= 0) {
                         Spacer(Modifier.width(5.dp))
                         Text(
@@ -362,24 +388,35 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             )
         }
 
-        // ---------------- 特效层
-        if (bigScale.value > 0.01f && bigText.isNotEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    bigText,
-                    fontSize = 42.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color(0xFFFFD54F),
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .graphicsLayer {
+        // ---------------- 特效层（素材艺术字）
+        if (bigScale.value > 0.01f) {
+            bigFx?.let { (_, res, label) ->
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.graphicsLayer {
                             scaleX = bigScale.value
                             scaleY = bigScale.value
                             alpha = bigScale.value
                         }
-                        .background(Color(0x88123A6E), RoundedCornerShape(14.dp))
-                        .padding(horizontal = 24.dp, vertical = 10.dp)
-                )
+                    ) {
+                        Image(
+                            painter = painterResource(res),
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.size(132.dp, 112.dp)
+                        )
+                        if (label.isNotEmpty()) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                label,
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color(0xFFFFD54F)
+                            )
+                        }
+                    }
+                }
             }
         }
         toast?.let { (_, t) ->
@@ -436,6 +473,37 @@ internal fun MjToolButton(text: String, danger: Boolean = false, onClick: () -> 
     }
 }
 
+/** 素材圆形按钮（胡/碰/杠/吃/过） */
+@Composable
+internal fun MjImageButton(res: Int, size: Dp, onClick: () -> Unit) {
+    Image(
+        painter = painterResource(res),
+        contentDescription = null,
+        contentScale = ContentScale.FillBounds,
+        modifier = Modifier
+            .size(size)
+            .shadow(5.dp, CircleShape)
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
+    )
+}
+
+/** 素材横条按钮（提示/打出/换三张，原始比例 126:72） */
+@Composable
+internal fun MjRectButton(res: Int, h: Dp, onClick: () -> Unit) {
+    Image(
+        painter = painterResource(res),
+        contentDescription = null,
+        contentScale = ContentScale.FillBounds,
+        modifier = Modifier
+            .height(h)
+            .width(h * 126f / 72f)
+            .shadow(4.dp, RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+    )
+}
+
 @Composable
 internal fun MjPillButton(text: String, container: Brush, enabled: Boolean = true, onClick: () -> Unit) {
     val shape = RoundedCornerShape(22.dp)
@@ -487,11 +555,20 @@ private fun MjOpponentPanel(
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        seat.name + if (seat.isDealer) " (庄)" else "",
+                        seat.name,
                         fontSize = 11.sp,
                         color = if (seat.isTurn) Color(0xFFFFE082) else Color(0xCCFFFFFF),
                         maxLines = 1
                     )
+                    if (seat.isDealer) {
+                        Spacer(Modifier.width(3.dp))
+                        Image(
+                            painter = painterResource(R.drawable.mj_mark_zhuang),
+                            contentDescription = "庄家",
+                            contentScale = ContentScale.FillBounds,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
                     if (seat.huRank > 0) {
                         Spacer(Modifier.width(4.dp))
                         Text("胡", fontSize = 11.sp, color = Gold, fontWeight = FontWeight.Black)
@@ -512,12 +589,11 @@ private fun MjOpponentPanel(
                     }
                     if (seat.ting) {
                         Spacer(Modifier.width(3.dp))
-                        Text(
-                            "听", fontSize = 9.sp, color = Color(0xFFFFAB91),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Color(0x33BF360C))
-                                .padding(horizontal = 3.dp, vertical = 0.5.dp)
+                        Image(
+                            painter = painterResource(R.drawable.mj_mark_ting),
+                            contentDescription = "听牌",
+                            contentScale = ContentScale.FillBounds,
+                            modifier = Modifier.size(14.dp)
                         )
                     }
                 }
@@ -614,13 +690,13 @@ private fun MjClaimBar(
     ) {
         claims.forEach { opt ->
             when (opt.kind) {
-                "HU" -> MjPillButton("胡", mjRedBrush()) { onClaim(opt) }
-                "GANG" -> MjPillButton("杠", mjOrangeBrush()) { onClaim(opt) }
-                "PENG" -> MjPillButton("碰", mjOrangeBrush()) { onClaim(opt) }
-                "CHI" -> MjPillButton("吃", mjBlueBrush()) { onClaim(opt) }
+                "HU" -> MjImageButton(R.drawable.mj_btn_hu, 56.dp) { onClaim(opt) }
+                "GANG" -> MjImageButton(R.drawable.mj_btn_gang, 56.dp) { onClaim(opt) }
+                "PENG" -> MjImageButton(R.drawable.mj_btn_peng, 56.dp) { onClaim(opt) }
+                "CHI" -> MjImageButton(R.drawable.mj_btn_chi, 56.dp) { onClaim(opt) }
             }
         }
-        MjPillButton("过", mjBlueBrush(), enabled = true) { onPass() }
+        MjImageButton(R.drawable.mj_btn_pass, 50.dp) { onPass() }
     }
 }
 
@@ -711,11 +787,22 @@ private fun MjResultOverlay(
                                     fontSize = 10.sp, color = Color(0x99FFE0B2)
                                 )
                             }
-                            Text(
-                                if (delta > 0) "+$delta" else "$delta",
-                                fontSize = 16.sp, fontWeight = FontWeight.Black,
-                                color = if (delta > 0) Color(0xFFFFD54F) else Color(0xFFFF8A80)
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (delta > 0) {
+                                    Image(
+                                        painter = painterResource(R.drawable.mj_coin),
+                                        contentDescription = "金币",
+                                        contentScale = ContentScale.FillBounds,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(3.dp))
+                                }
+                                Text(
+                                    if (delta > 0) "+$delta" else "$delta",
+                                    fontSize = 16.sp, fontWeight = FontWeight.Black,
+                                    color = if (delta > 0) Color(0xFFFFD54F) else Color(0xFFFF8A80)
+                                )
+                            }
                         }
                     }
             }

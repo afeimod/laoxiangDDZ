@@ -1,16 +1,15 @@
 package com.laoxiang.ddz.ui.game
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
@@ -19,10 +18,10 @@ import com.laoxiang.ddz.R
 import com.laoxiang.ddz.data.MjTile
 
 /**
- * 麻将牌渲染 v2 —— 预渲染立体贴图（res/drawable-nodpi/mj_*.png，152x200@RGBA）。
- * 立体要素全部烘焙在贴图内：柔和投影 / 祖母绿侧身厚度 / 象牙面渐变+斜面倒角 /
- * 顶部釉光 / 刻字压印（暗字 + 右下受光边）/ 竹节·筒环高光。
- * [w] 为牌宽，高 = w × 1.32（与贴图等比 152:200）。
+ * 麻将牌渲染 v3 —— 真实素材合成贴图（res/drawable-nodpi/mj_*.png，178x256@RGBA）。
+ * 牌体：8 倍超采样立体渲染（投影/绿侧身/象牙面渐变/倒角/釉光）；
+ * 刻字：用户提供的原版棋牌素材（psmj 系列）等比合成。
+ * [w] 为牌宽，高 = w × 1.4382（与贴图等比 89:128）。
  */
 
 /** code(0..33) -> 牌面贴图：0..8 万 / 9..17 筒 / 18..26 条 / 27..33 东南西北中發白 */
@@ -41,7 +40,7 @@ private fun faceRes(code: Int): Int = when (code) {
     else -> R.drawable.mj_bai
 }
 
-/** 单张麻将牌（tile=null 或 faceUp=false 画绿背） */
+/** 单张麻将牌（tile=null 或 faceUp=false 画牌背） */
 @Composable
 fun MjTileView(
     tile: MjTile?,
@@ -53,7 +52,7 @@ fun MjTileView(
     laiziMark: Boolean = false,
     alpha: Float = 1f
 ) {
-    val h = w * 1.32f
+    val h = w * 1.4382f
     val lifted = raised || selected
     val painter = painterResource(
         if (!faceUp || tile == null) R.drawable.mj_back else faceRes(tile.code)
@@ -72,13 +71,16 @@ fun MjTileView(
             alpha = alpha
         )
         if (laiziMark && faceUp) {
-            // 癞子金点标记（沿用 v1 位置与比例）
-            Canvas(Modifier.size(w, h)) {
-                val rr = size.width * 0.2f
-                val c = Offset(size.width - rr - 2f, rr + 2f)
-                drawCircle(Color(0xFFFFC107), rr, c)
-                drawCircle(Color(0xFF5D4037), rr * 0.55f, c)
-            }
+            // 财神标记（素材：mj_mark_caishen 30x59，竖排金字）叠在牌右上角
+            Image(
+                painter = painterResource(R.drawable.mj_mark_caishen),
+                contentDescription = "癞子标记",
+                contentScale = ContentScale.FillBounds,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(end = w * 0.04f, top = w * 0.05f)
+                    .size(w * 0.26f, w * 0.26f * 59f / 30f)
+            )
         }
     }
 }
