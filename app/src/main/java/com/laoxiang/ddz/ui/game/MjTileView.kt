@@ -18,10 +18,9 @@ import com.laoxiang.ddz.R
 import com.laoxiang.ddz.data.MjTile
 
 /**
- * 麻将牌渲染 v3 —— 真实素材合成贴图（res/drawable-nodpi/mj_*.png，178x256@RGBA）。
- * 牌体：8 倍超采样立体渲染（投影/绿侧身/象牙面渐变/倒角/釉光）；
- * 刻字：用户提供的原版棋牌素材（psmj 系列）等比合成。
- * [w] 为牌宽，高 = w × 1.4382（与贴图等比 89:128）。
+ * 麻将牌渲染 v4 —— 用户素材原样合成贴图（res/drawable-nodpi/mj_*.png，178x246@RGBA）。
+ * 牌体 = 素材 psmmj0 白色立体牌体（含顶部绿边），刻字 = 素材 psmj1..34 原样叠加。
+ * [w] 为牌宽，高 = w × 1.38202（与贴图等比 89:123）。
  */
 
 /** code(0..33) -> 牌面贴图：0..8 万 / 9..17 筒 / 18..26 条 / 27..33 东南西北中發白 */
@@ -52,7 +51,7 @@ fun MjTileView(
     laiziMark: Boolean = false,
     alpha: Float = 1f
 ) {
-    val h = w * 1.4382f
+    val h = w * 1.38202f
     val lifted = raised || selected
     val painter = painterResource(
         if (!faceUp || tile == null) R.drawable.mj_back else faceRes(tile.code)

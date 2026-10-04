@@ -7,10 +7,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,6 +21,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -30,6 +29,7 @@ import com.laoxiang.ddz.R
 import com.laoxiang.ddz.data.MjClaimOpt
 import com.laoxiang.ddz.data.MjMeld
 import com.laoxiang.ddz.data.MjPhase
+import com.laoxiang.ddz.data.MjSeatView
 import com.laoxiang.ddz.data.MjSnapshot
 import com.laoxiang.ddz.data.MjTile
 import com.laoxiang.ddz.ui.common.AvatarImage
@@ -38,156 +38,334 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * 麻将牌局（麻将桌布局）：下=我、右=下家、上=对家、左=上家。
- * 四家牌河围绕中央；底部手牌扇形排列；吃碰杠胡按钮浮层；
- * 定缺 / 换三张 阶段浮层；结算浮层（血战多赢家）。
+ * 麻将牌局 —— 按参考图排版：
+ * 木框青绿呢面桌面；下=我（大牌手牌+右侧副露）、右=下家、上=对家（卧牌背）、左=上家（立牌背）；
+ * 左右贴边牌墙立柱、底部牌墙横排；四家牌河用素材卧牌围绕中央罗盘；
+ * 胡碰杠吃圆形素材按钮、定缺三色圆钮、换三张原版按钮；结算/特效/快捷喊话浮层。
  */
+
+/** 出牌卧牌贴图（mj_disc_0..33）与旋转版 */
+private val DISC_RES = intArrayOf(
+    R.drawable.mj_disc_0, R.drawable.mj_disc_1, R.drawable.mj_disc_2, R.drawable.mj_disc_3,
+    R.drawable.mj_disc_4, R.drawable.mj_disc_5, R.drawable.mj_disc_6, R.drawable.mj_disc_7,
+    R.drawable.mj_disc_8, R.drawable.mj_disc_9, R.drawable.mj_disc_10, R.drawable.mj_disc_11,
+    R.drawable.mj_disc_12, R.drawable.mj_disc_13, R.drawable.mj_disc_14, R.drawable.mj_disc_15,
+    R.drawable.mj_disc_16, R.drawable.mj_disc_17, R.drawable.mj_disc_18, R.drawable.mj_disc_19,
+    R.drawable.mj_disc_20, R.drawable.mj_disc_21, R.drawable.mj_disc_22, R.drawable.mj_disc_23,
+    R.drawable.mj_disc_24, R.drawable.mj_disc_25, R.drawable.mj_disc_26, R.drawable.mj_disc_27,
+    R.drawable.mj_disc_28, R.drawable.mj_disc_29, R.drawable.mj_disc_30, R.drawable.mj_disc_31,
+    R.drawable.mj_disc_32, R.drawable.mj_disc_33
+)
+
+private val DISC_ROT = intArrayOf(
+    R.drawable.mj_disc_0r, R.drawable.mj_disc_1r, R.drawable.mj_disc_2r, R.drawable.mj_disc_3r,
+    R.drawable.mj_disc_4r, R.drawable.mj_disc_5r, R.drawable.mj_disc_6r, R.drawable.mj_disc_7r,
+    R.drawable.mj_disc_8r, R.drawable.mj_disc_9r, R.drawable.mj_disc_10r, R.drawable.mj_disc_11r,
+    R.drawable.mj_disc_12r, R.drawable.mj_disc_13r, R.drawable.mj_disc_14r, R.drawable.mj_disc_15r,
+    R.drawable.mj_disc_16r, R.drawable.mj_disc_17r, R.drawable.mj_disc_18r, R.drawable.mj_disc_19r,
+    R.drawable.mj_disc_20r, R.drawable.mj_disc_21r, R.drawable.mj_disc_22r, R.drawable.mj_disc_23r,
+    R.drawable.mj_disc_24r, R.drawable.mj_disc_25r, R.drawable.mj_disc_26r, R.drawable.mj_disc_27r,
+    R.drawable.mj_disc_28r, R.drawable.mj_disc_29r, R.drawable.mj_disc_30r, R.drawable.mj_disc_31r,
+    R.drawable.mj_disc_32r, R.drawable.mj_disc_33r
+)
+
+private val NUM_RES = intArrayOf(
+    R.drawable.mj_num0, R.drawable.mj_num1, R.drawable.mj_num2, R.drawable.mj_num3,
+    R.drawable.mj_num4, R.drawable.mj_num5, R.drawable.mj_num6, R.drawable.mj_num7,
+    R.drawable.mj_num8, R.drawable.mj_num9
+)
+
+/** 风位指示（(turn-dealer+4)%4 → 东南西北） */
+private val WIND_RES = intArrayOf(
+    R.drawable.mj_wind_e, R.drawable.mj_wind_s, R.drawable.mj_wind_w, R.drawable.mj_wind_n
+)
+
 @Composable
 fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
     val snapshot by vm.snapshot.collectAsState()
-    val snap = snapshot ?: run {
-        Box(Modifier.fillMaxSize()) {
-            TableBackground(
-                bgKey = vm.prefs.tableBg,
-                modifier = Modifier.fillMaxSize(),
-                engraving = "老乡麻将"
-            )
-            Box(
-                Modifier.fillMaxSize().background(Color(0xFF16305C).copy(alpha = 0.5f)),
-                contentAlignment = Alignment.Center
-            ) { Text("准备开局…", color = Color(0xCCD7E7FA), fontSize = 15.sp) }
-        }
-        return
-    }
-
-    val mySeat by vm.mySeat.collectAsState()
-    val n = 4
-    val seats = snap.seats
-    val me = seats[mySeat.coerceIn(0, 3)]
-    val right = seats[(mySeat + 1) % n]
-    val top = seats[(mySeat + 2) % n]
-    val left = seats[(mySeat + 3) % n]
-
-    val selected by vm.selected.collectAsState()
-
-    var toast by remember { mutableStateOf<Pair<Long, String>?>(null) }
-    var showChat by remember { mutableStateOf(false) }
-    var myBubble by remember { mutableStateOf<Pair<Long, String>?>(null) }
-    // 中央大特效：(时间戳, 素材资源, 附加文字)
-    var bigFx by remember { mutableStateOf<Triple<Long, Int, String>?>(null) }
-    val bigScale = remember { Animatable(0f) }
-    val scope = rememberCoroutineScope()
-
-    LaunchedEffect(myBubble?.first) { if (myBubble != null) { delay(2600); myBubble = null } }
-    LaunchedEffect(toast?.first) { if (toast != null) { delay(2200); toast = null } }
-    LaunchedEffect(Unit) {
-        vm.fx.collect { f ->
-            when (f) {
-                is MjFx.Claim -> if (f.seat != mySeat) {
-                    bigFx = Triple(
-                        System.nanoTime(),
-                        when (f.kind) {
-                            "CHI" -> R.drawable.mj_fx_chi
-                            "PENG" -> R.drawable.mj_fx_peng
-                            else -> R.drawable.mj_fx_gang
-                        },
-                        ""
-                    )
-                    flashBig(bigScale)
-                }
-                is MjFx.Hu -> {
-                    bigFx = Triple(
-                        System.nanoTime(), R.drawable.mj_fx_hu,
-                        if (f.selfDraw) "自摸" else ""
-                    )
-                    flashBig(bigScale)
-                }
-                is MjFx.LiuJu -> {
-                    bigFx = Triple(System.nanoTime(), R.drawable.mj_fx_liuju, "")
-                    flashBig(bigScale)
-                }
-                else -> {}
-            }
-        }
-    }
-    LaunchedEffect(Unit) {
-        vm.opNotice.collect { t -> if (t != null) { toast = System.nanoTime() to t; vm.clearOpNotice() } }
-    }
 
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFF0E4A38))
+            .background(Color(0xFF274F48))
     ) {
-        TableBackground(
-            bgKey = vm.prefs.tableBg,
-            modifier = Modifier.fillMaxSize(),
-            engraving = if (snap.phase == MjPhase.PLAYING) "老乡麻将" else null
+        // 桌面：素材 table.jpg + 木纹边框（原样）
+        Image(
+            painter = painterResource(R.drawable.bg_mj_table),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
         )
 
-        val tileW = (maxWidth / 11f).coerceAtMost(54.dp)
-        val smallW = tileW * 0.42f
-        val meldW = tileW * 0.55f
+        val W = maxWidth
+        val H = maxHeight
+        val frame = W * 0.0285f                     // 木框厚度
+        val handW = ((W - 200.dp) / 14.6f).coerceAtMost(H * 0.098f)
+        val handH = handW * 1.382f
+        val meldW = handW * 0.78f
+        val discW = handW * 0.60f
+        val backW = handW * 0.44f
+        val backH = backW * 1.5f
+        val backLieW = handW * 0.72f
+        val wallW = handW * 0.42f
+        val wallH = wallW * 122f / 82f
+        val plateSz = H * 0.245f
+        val edgeX = frame + wallW * 0.75f           // 左右贴边带中心
 
-        // ---------------- 顶部工具条
+        val snap = snapshot ?: run {
+            Text(
+                "准备开局…",
+                color = Color(0xCCD7E7FA), fontSize = 15.sp,
+                modifier = Modifier.align(Alignment.Center)
+            )
+            return@BoxWithConstraints
+        }
+
+        val mySeat by vm.mySeat.collectAsState()
+        val n = 4
+        val seats = snap.seats
+        val me = seats[mySeat.coerceIn(0, 3)]
+        val right = seats[(mySeat + 1) % n]
+        val top = seats[(mySeat + 2) % n]
+        val left = seats[(mySeat + 3) % n]
+        val selected by vm.selected.collectAsState()
+
+        var toast by remember { mutableStateOf<Pair<Long, String>?>(null) }
+        var showChat by remember { mutableStateOf(false) }
+        var myBubble by remember { mutableStateOf<Pair<Long, String>?>(null) }
+        var bigFx by remember { mutableStateOf<Triple<Long, Int, String>?>(null) }
+        val bigScale = remember { Animatable(0f) }
+        val scope = rememberCoroutineScope()
+
+        LaunchedEffect(myBubble?.first) { if (myBubble != null) { delay(2600); myBubble = null } }
+        LaunchedEffect(toast?.first) { if (toast != null) { delay(2200); toast = null } }
+        LaunchedEffect(Unit) {
+            vm.fx.collect { f ->
+                when (f) {
+                    is MjFx.Claim -> if (f.seat != mySeat) {
+                        bigFx = Triple(
+                            System.nanoTime(),
+                            when (f.kind) {
+                                "CHI" -> R.drawable.mj_fx_chi
+                                "PENG" -> R.drawable.mj_fx_peng
+                                else -> R.drawable.mj_fx_gang
+                            },
+                            ""
+                        )
+                        flashBig(bigScale)
+                    }
+                    is MjFx.Hu -> {
+                        bigFx = Triple(
+                            System.nanoTime(), R.drawable.mj_fx_hu,
+                            if (f.selfDraw) "自摸" else ""
+                        )
+                        flashBig(bigScale)
+                    }
+                    is MjFx.LiuJu -> {
+                        bigFx = Triple(System.nanoTime(), R.drawable.mj_fx_liuju, "")
+                        flashBig(bigScale)
+                    }
+                    else -> {}
+                }
+            }
+        }
+        LaunchedEffect(Unit) {
+            vm.opNotice.collect { t -> if (t != null) { toast = System.nanoTime() to t; vm.clearOpNotice() } }
+        }
+
+        // ================= 顶部工具条（模式/癞子/余牌/离桌） =================
+        Row(
+            Modifier
+                .align(Alignment.TopStart)
+                .padding(start = frame * 0.6f, top = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color(0x96121A18))
+                    .border(1.dp, Color(0x4DFFD9A0), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    snap.mode.label,
+                    color = Color(0xFFEBCB8C), fontSize = 12.sp, fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.width(8.dp))
+                Image(
+                    painter = painterResource(R.drawable.mj_tile_icon),
+                    contentDescription = null,
+                    contentScale = ContentScale.FillBounds,
+                    modifier = Modifier.size(9.dp, 13.dp)
+                )
+                Spacer(Modifier.width(3.dp))
+                NumDigits(snap.wallCount, 13.dp)
+                if (snap.laiziCode >= 0) {
+                    Spacer(Modifier.width(8.dp))
+                    Text("癞子", color = Color(0xFFFFD54F), fontSize = 11.sp)
+                    MjTileView(
+                        tile = MjTile.byId(tileIdOfCode(snap.laiziCode)),
+                        w = 17.dp, laiziMark = true,
+                        modifier = Modifier.padding(start = 3.dp)
+                    )
+                }
+                MjToolButton("离桌", danger = true) { onExit() }
+            }
+        }
+
+        // ================= 牌墙：左右上角立柱 + 底部横排 =================
+        Column(
+            Modifier
+                .align(Alignment.TopStart)
+                .offset(x = edgeX - wallW * 0.35f, y = frame - 2.dp),
+            verticalArrangement = Arrangement.spacedBy(wallW * 0.28f)
+        ) {
+            repeat(4) { MjWallTile(wallW, vertical = true) }
+        }
+        Column(
+            Modifier
+                .align(Alignment.TopEnd)
+                .offset(x = -(edgeX - wallW * 0.35f), y = frame - 2.dp),
+            verticalArrangement = Arrangement.spacedBy(wallW * 0.28f)
+        ) {
+            repeat(4) { MjWallTile(wallW, vertical = true) }
+        }
+        Row(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .offset(y = -(frame * 0.5f + handH + wallH * 0.5f + 5.dp)),
+            horizontalArrangement = Arrangement.spacedBy(wallW * 0.05f)
+        ) {
+            repeat(12) { MjWallTile(wallW, vertical = false) }
+        }
+
+        // ================= 对家：卧牌背横排 =================
+        val backsTop = frame + 8.dp + backLieW * 0.5f
         Row(
             Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 2.dp)
-                .clip(RoundedCornerShape(15.dp))
-                .background(Color(0x52000000))
-                .border(1.dp, Color(0x3DA8C8F0), RoundedCornerShape(15.dp))
-                .padding(horizontal = 3.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .offset(y = backsTop - backLieW * 0.5f),
+            horizontalArrangement = Arrangement.spacedBy(-backLieW * 0.30f)
         ) {
-            Text(
-                snap.mode.label,
-                color = Color(0xFFEBCB8C),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 9.dp)
-            )
-            Text(
-                "余 ${snap.wallCount}",
-                color = Color(0xCCD7E7FA), fontSize = 11.sp,
-                modifier = Modifier.padding(horizontal = 6.dp)
-            )
-            if (snap.laiziCode >= 0) {
-                Text("癞子", color = Color(0xFFFFD54F), fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
-                MjTileView(
-                    tile = MjTile.byId(tileIdOfCode(snap.laiziCode)),
-                    w = smallW * 0.92f,
-                    laiziMark = true,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                )
+            repeat(top.handCount.coerceIn(1, 14)) { MjBackLie(backLieW) }
+        }
+        // 对家副露（顶部右侧）
+        if (top.melds.isNotEmpty()) {
+            Row(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(y = backsTop + backLieW * 0.28f)
+                    .padding(end = frame + 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                top.melds.forEach { m -> m.tiles.forEach { t -> MjDiscTile(t.code, discW * 0.94f) } }
             }
-            MjToolButton("离桌", danger = true) { onExit() }
+        }
+        // 对家牌河（牌背下方，最新一排靠中央）
+        val topRiverRows = top.river.chunked(8).takeLast(2)
+        Column(
+            Modifier
+                .align(Alignment.TopCenter)
+                .offset(y = backsTop + backLieW * 0.40f + discW * 0.52f + 4.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            topRiverRows.forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    row.forEach { t -> MjDiscTile(t.code, discW) }
+                }
+            }
         }
 
-        // ---------------- 三家对手
-        MjOpponentPanel(left, false, meldW, Modifier.align(Alignment.CenterStart).padding(start = 6.dp))
-        MjOpponentPanel(right, false, meldW, Modifier.align(Alignment.CenterEnd).padding(end = 6.dp))
-        MjOpponentPanel(top, true, meldW, Modifier.align(Alignment.TopCenter).padding(top = 34.dp))
+        // ================= 上家（左）/ 下家（右）：立牌背列 + 副露 + 牌河 =================
+        val colTop = H * 0.26f
+        val backSp = backH * 0.44f
+        listOf(left to false, right to true).forEach { (seat, isRight) ->
+            val backs = seat.handCount.coerceIn(1, 14)
+            Column(
+                Modifier
+                    .align(if (isRight) Alignment.TopEnd else Alignment.TopStart)
+                    .offset(
+                        x = (if (isRight) -1 else 1) * (edgeX - backW * 0.5f),
+                        y = colTop
+                    ),
+                verticalArrangement = Arrangement.spacedBy(-backH * 0.56f),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                repeat(backs) { MjBackStand(backW) }
+            }
+            // 副露：立背列下方竖排卧牌（超过 6 张分双列，防溢出屏幕）
+            val backsEnd = colTop + (backs - 1) * backH * 0.44f + backH * 0.5f
+            if (seat.melds.isNotEmpty()) {
+                Row(
+                    Modifier
+                        .align(if (isRight) Alignment.TopEnd else Alignment.TopStart)
+                        .offset(
+                            x = (if (isRight) -1 else 1) * (edgeX - discW * 0.35f),
+                            y = backsEnd + 10.dp
+                        ),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    seat.melds.flatMap { it.tiles }.chunked(6).forEach { col ->
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            col.forEach { t -> MjDiscTile(t.code, discW * 0.88f, rotated = true) }
+                        }
+                    }
+                }
+            }
+            // 牌河：竖排（旋转卧牌），靠内一列
+            val riverCols = seat.river.chunked(4).takeLast(2)
+            Row(
+                Modifier
+                    .align(Alignment.CenterStart)
+                    .offset(
+                        x = (if (isRight) -1 else 1) * (frame + wallW * 1.53f + discW * 0.5f),
+                        y = H * 0.03f
+                    ),
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                riverCols.forEach { col ->
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        col.forEach { t -> MjDiscTile(t.code, discW, rotated = true) }
+                    }
+                }
+            }
+        }
 
-        // ---------------- 牌河（围绕中央）
-        MjRiver(
-            left.river, smallW, vertical = true,
-            modifier = Modifier.align(Alignment.CenterStart).padding(start = 92.dp)
-        )
-        MjRiver(
-            right.river, smallW, vertical = true,
-            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 92.dp)
-        )
-        MjRiver(
-            top.river, smallW, vertical = false,
-            modifier = Modifier.align(Alignment.TopCenter).padding(top = 96.dp)
-        )
-        MjRiver(
-            me.river, smallW, vertical = false,
-            modifier = Modifier.align(Alignment.Center).padding(bottom = 26.dp)
-        )
+        // ================= 中央罗盘 + 剩余数 + 风位 =================
+        val plateOffsetY = -H * 0.045f
+        Box(
+            Modifier
+                .align(Alignment.Center)
+                .offset(y = plateOffsetY)
+                .size(plateSz)
+        ) {
+            Image(
+                painter = painterResource(R.drawable.mj_plate),
+                contentDescription = null,
+                contentScale = ContentScale.FillBounds,
+                modifier = Modifier.matchParentSize()
+            )
+            Row(
+                Modifier.align(Alignment.Center),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                NumDigits(snap.wallCount, plateSz * 0.20f)
+            }
+            Image(
+                painter = painterResource(WIND_RES[(snap.turn - snap.dealer + 4) % 4]),
+                contentDescription = null,
+                contentScale = ContentScale.FillBounds,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .offset(y = plateSz * 0.16f)
+                    .size(plateSz * 0.30f, plateSz * 0.17f)
+            )
+        }
 
-        // ---------------- 中央提示
+        // 中央提示
         val myTurn = snap.phase == MjPhase.PLAYING && snap.turn == mySeat
         val centerHint = when {
             snap.phase == MjPhase.DINGQUE ->
@@ -201,166 +379,180 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         if (centerHint.isNotEmpty()) {
             Text(
                 centerHint,
-                color = Color(0xCCFFE082),
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
+                color = Color(0xFFE6C36A), fontSize = 14.sp, fontWeight = FontWeight.Bold,
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .padding(bottom = 150.dp)
+                    .offset(y = plateOffsetY + plateSz * 0.66f)
             )
         }
 
-        // ---------------- 我的副露（手牌上方左侧）
-        Row(
+        // ================= 我的牌河（牌墙上方，最新靠墙） =================
+        val myRiverRows = me.river.chunked(8).takeLast(2)
+        Column(
             Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 10.dp, bottom = 118.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                .align(Alignment.BottomCenter)
+                .offset(
+                    x = W * 0.12f,
+                    y = -(frame * 0.5f + handH + wallH + discW * 1.04f + 12.dp)
+                ),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+            horizontalAlignment = Alignment.End
         ) {
-            me.melds.forEach { m -> MjMeldRow(m, meldW) }
+            myRiverRows.forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    row.forEach { t -> MjDiscTile(t.code, discW) }
+                }
+            }
         }
 
-        // ---------------- 手牌
+        // ================= 手牌 + 副露 =================
         val hand = me.hand.sortedBy { it.code }
-        Row(
+        Box(
             Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 54.dp),
-            horizontalArrangement = Arrangement.spacedBy((-tileW.value * 0.16f).dp),
-            verticalAlignment = Alignment.Bottom
+                .fillMaxWidth()
+                .padding(bottom = frame * 0.5f)
+                .padding(start = 96.dp, end = 6.dp),
+            contentAlignment = Alignment.BottomCenter
         ) {
-            hand.forEach { t ->
-                MjTileView(
-                    tile = t,
-                    w = tileW,
-                    selected = t.id in selected,
-                    laiziMark = snap.laiziCode == t.code,
-                    modifier = Modifier.clickable {
-                        if (t.id in selected) {
-                            val err = vm.discardSelected()
-                            if (err != null) toast = System.nanoTime() to err
-                        } else vm.toggleSelect(t.id)
+        Row(verticalAlignment = Alignment.Bottom) {
+            Row(horizontalArrangement = Arrangement.spacedBy(handW * 0.035f)) {
+                hand.forEach { t ->
+                    MjTileView(
+                        tile = t,
+                        w = handW,
+                        selected = t.id in selected,
+                        laiziMark = snap.laiziCode == t.code,
+                        modifier = Modifier.clickable {
+                            if (t.id in selected) {
+                                val err = vm.discardSelected()
+                                if (err != null) toast = System.nanoTime() to err
+                            } else vm.toggleSelect(t.id)
+                        }
+                    )
+                }
+            }
+            if (me.melds.isNotEmpty()) {
+                Spacer(Modifier.width(handW * 0.14f))
+                Row(
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(meldW * 0.10f)
+                ) {
+                    me.melds.forEach { m ->
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(handW * 0.035f),
+                            modifier = Modifier.offset(y = -handH * 0.085f)
+                        ) {
+                            m.tiles.forEach { t -> MjDiscTile(t.code, meldW) }
+                        }
                     }
-                )
+                }
             }
         }
+        }
 
-        // ---------------- 底部按钮条
-        Row(
+        // ================= 右下操作区（横条按钮 / 宣告按钮） =================
+        Column(
             Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .align(Alignment.BottomEnd)
+                .padding(end = frame + wallW * 1.7f, bottom = frame * 0.5f + handH + 10.dp),
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // 暗杠 / 补杠快捷
-            if (snap.anGangCodes.isNotEmpty()) {
-                MjPillButton("暗杠", mjOrangeBrush()) {
-                    val err = vm.declareGang(snap.anGangCodes.first(), bu = false, tileId = -1)
-                    if (err != null) toast = System.nanoTime() to err
+            // 横条：暗杠/补杠/提示/出牌/换三张
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (snap.anGangCodes.isNotEmpty()) {
+                    MjPillButton("暗杠", mjOrangeBrush()) {
+                        val err = vm.declareGang(snap.anGangCodes.first(), bu = false, tileId = -1)
+                        if (err != null) toast = System.nanoTime() to err
+                    }
+                }
+                if (snap.buGangIds.isNotEmpty()) {
+                    MjPillButton("补杠", mjOrangeBrush()) {
+                        val err = vm.declareGang(-1, bu = true, tileId = snap.buGangIds.first())
+                        if (err != null) toast = System.nanoTime() to err
+                    }
+                }
+                if (myTurn && snap.awaitingDiscard) {
+                    MjRectButton(R.drawable.mj_btn_hint, 30.dp) {
+                        val err = vm.hint()
+                        if (err != null) toast = System.nanoTime() to err
+                    }
+                    MjRectButton(R.drawable.mj_btn_discard, 30.dp) {
+                        val err = vm.discardSelected()
+                        if (err != null) toast = System.nanoTime() to err
+                    }
+                }
+                if (snap.phase == MjPhase.SWAP3 && !snap.swapPicked) {
+                    MjRectButton(R.drawable.mj_btn_swap3, 30.dp) {
+                        val err = vm.confirmSwap()
+                        if (err != null) toast = System.nanoTime() to err
+                    }
                 }
             }
-            if (snap.buGangIds.isNotEmpty()) {
-                MjPillButton("补杠", mjOrangeBrush()) {
-                    val err = vm.declareGang(-1, bu = true, tileId = snap.buGangIds.first())
-                    if (err != null) toast = System.nanoTime() to err
-                }
-            }
-            if (myTurn && snap.awaitingDiscard) {
-                MjRectButton(R.drawable.mj_btn_hint, 34.dp) {
-                    val err = vm.hint()
-                    if (err != null) toast = System.nanoTime() to err
-                }
-                MjRectButton(R.drawable.mj_btn_discard, 34.dp) {
-                    val err = vm.discardSelected()
-                    if (err != null) toast = System.nanoTime() to err
-                }
-            }
-            // 换三张确认
-            if (snap.phase == MjPhase.SWAP3 && !snap.swapPicked) {
-                MjRectButton(R.drawable.mj_btn_swap3, 34.dp) {
-                    val err = vm.confirmSwap()
-                    if (err != null) toast = System.nanoTime() to err
+            // 宣告：胡/杠/碰/吃 + 过
+            if (snap.myClaims.isNotEmpty()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    snap.myClaims.forEach { opt ->
+                        when (opt.kind) {
+                            "HU" -> MjImageButton(R.drawable.mj_btn_hu, 46.dp) { vm.doClaim(opt) }
+                            "GANG" -> MjImageButton(R.drawable.mj_btn_gang, 46.dp) { vm.doClaim(opt) }
+                            "PENG" -> MjImageButton(R.drawable.mj_btn_peng, 46.dp) { vm.doClaim(opt) }
+                            "CHI" -> MjImageButton(R.drawable.mj_btn_chi, 46.dp) { vm.doClaim(opt) }
+                        }
+                    }
+                    MjImageButton(R.drawable.mj_btn_pass, 42.dp) { vm.passClaim() }
                 }
             }
         }
 
-        // ---------------- 宣告按钮（胡/杠/碰/吃/过）
-        if (snap.myClaims.isNotEmpty()) {
-            MjClaimBar(
-                claims = snap.myClaims,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 118.dp),
-                onClaim = { vm.doClaim(it) },
-                onPass = { vm.passClaim() }
-            )
-        }
-
-        // ---------------- 定缺浮层
+        // ================= 定缺（三色圆钮） =================
         if (snap.phase == MjPhase.DINGQUE && me.dingque < 0) {
-            MjDingQueBar(
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 118.dp),
-                onPick = { vm.dingque(it) }
-            )
+            Row(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = frame * 0.5f + handH * 1.32f),
+                horizontalArrangement = Arrangement.spacedBy(18.dp)
+            ) {
+                MjSuitCircle(0, "万", listOf(Color(0xFFEF6A5A), Color(0xFFB3271D)), 46.dp) { vm.dingque(it) }
+                MjSuitCircle(2, "条", listOf(Color(0xFF63D8B8), Color(0xFF1D8574)), 46.dp) { vm.dingque(it) }
+                MjSuitCircle(1, "筒", listOf(Color(0xFFFFB84D), Color(0xFFD97A16)), 46.dp) { vm.dingque(it) }
+            }
         }
 
-        // ---------------- 左下：我的信息
-        Row(
+        // ================= 玩家信息卡 =================
+        MjPlayerCard(
+            me, true,
             Modifier
                 .align(Alignment.BottomStart)
-                .padding(start = 12.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            AvatarImage(
-                me.avatar, 44.dp,
-                Modifier.border(
-                    2.5.dp,
-                    if (me.isTurn) Color(0xFFFFC107) else Color(0x66FFFFFF),
-                    CircleShape
-                )
-            )
-            Spacer(Modifier.width(6.dp))
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        me.name,
-                        fontSize = 12.sp, fontWeight = FontWeight.Bold,
-                        color = if (me.isTurn) Color(0xFFFFE082) else Color.White
-                    )
-                    if (me.isDealer) {
-                        Spacer(Modifier.width(3.dp))
-                        Image(
-                            painter = painterResource(R.drawable.mj_mark_zhuang),
-                            contentDescription = "庄家",
-                            contentScale = ContentScale.FillBounds,
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-                    if (me.dingque >= 0) {
-                        Spacer(Modifier.width(5.dp))
-                        Text(
-                            "缺${suitLabel(me.dingque)}",
-                            fontSize = 10.sp,
-                            color = Color(0xFF80DEEA),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(5.dp))
-                                .background(Color(0x33123A6E))
-                                .padding(horizontal = 4.dp, vertical = 1.dp)
-                        )
-                    }
-                    if (me.huRank > 0) {
-                        Spacer(Modifier.width(5.dp))
-                        Text("胡", fontSize = 11.sp, color = Gold, fontWeight = FontWeight.Black)
-                    }
-                }
-                myBubble?.let { (_, t) -> Bubble(t) }
-            }
-        }
+                .padding(start = frame * 0.7f, bottom = frame * 0.4f)
+        )
+        MjPlayerCard(
+            top, false,
+            Modifier
+                .align(Alignment.TopEnd)
+                .padding(end = frame * 0.7f, top = frame * 0.5f)
+        )
+        MjPlayerCard(
+            left, false,
+            Modifier
+                .align(Alignment.CenterStart)
+                .offset(y = -H * 0.29f)
+                .padding(start = frame + wallW * 1.53f + discW * 0.62f)
+        )
+        MjPlayerCard(
+            right, false,
+            Modifier
+                .align(Alignment.CenterEnd)
+                .offset(y = -H * 0.29f)
+                .padding(end = frame + wallW * 1.53f + discW * 0.62f)
+        )
 
-        // ---------------- 右下：快捷喊话
+        // ================= 快捷喊话 =================
         Row(
-            Modifier.align(Alignment.BottomEnd).padding(end = 10.dp, bottom = 6.dp)
+            Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 6.dp, bottom = 8.dp)
         ) { StripChatButton { showChat = true } }
 
         androidx.compose.animation.AnimatedVisibility(
@@ -378,7 +570,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             )
         }
 
-        // ---------------- 结算浮层
+        // ================= 结算浮层 =================
         if (snap.result != null) {
             MjResultOverlay(
                 snap = snap,
@@ -388,7 +580,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             )
         }
 
-        // ---------------- 特效层（素材艺术字）
+        // ================= 特效层 =================
         if (bigScale.value > 0.01f) {
             bigFx?.let { (_, res, label) ->
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -410,8 +602,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                             Spacer(Modifier.height(6.dp))
                             Text(
                                 label,
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Black,
+                                fontSize = 20.sp, fontWeight = FontWeight.Black,
                                 color = Color(0xFFFFD54F)
                             )
                         }
@@ -423,14 +614,28 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
                 Text(
                     t,
-                    color = Color.White,
-                    fontSize = 14.sp,
+                    color = Color.White, fontSize = 14.sp,
                     modifier = Modifier
-                        .padding(bottom = 170.dp)
+                        .padding(bottom = frame * 0.5f + handH + 26.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(Color(0xAA000000))
                         .padding(horizontal = 14.dp, vertical = 7.dp)
                 )
+            }
+        }
+        if (myBubble != null) {
+            myBubble?.let { (_, t) ->
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomStart) {
+                    Text(
+                        t,
+                        color = Color.White, fontSize = 12.sp,
+                        modifier = Modifier
+                            .padding(start = frame * 0.7f + 54.dp, bottom = frame * 0.4f + 58.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0x99122A44))
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    )
+                }
             }
         }
     }
@@ -456,7 +661,7 @@ private fun suitLabel(suit: Int) = when (suit) { 0 -> "万"; 1 -> "筒"; else ->
 
 private fun swapDirLabel(dir: Int) = when (dir) { 1 -> "下家"; 2 -> "对家"; 3 -> "上家"; else -> "隔壁" }
 
-// ================================================================ 组件
+// ================================================================ 通用小部件
 
 @Composable
 internal fun MjToolButton(text: String, danger: Boolean = false, onClick: () -> Unit) {
@@ -488,7 +693,7 @@ internal fun MjImageButton(res: Int, size: Dp, onClick: () -> Unit) {
     )
 }
 
-/** 素材横条按钮（提示/打出/换三张，原始比例 126:72） */
+/** 素材横条按钮（提示/出牌/换三张，原始比例 126:72） */
 @Composable
 internal fun MjRectButton(res: Int, h: Dp, onClick: () -> Unit) {
     Image(
@@ -506,7 +711,7 @@ internal fun MjRectButton(res: Int, h: Dp, onClick: () -> Unit) {
 
 @Composable
 internal fun MjPillButton(text: String, container: Brush, enabled: Boolean = true, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(22.dp)
+    val shape = RoundedCornerShape(20.dp)
     Box(
         Modifier
             .shadow(if (enabled) 5.dp else 0.dp, shape)
@@ -514,51 +719,130 @@ internal fun MjPillButton(text: String, container: Brush, enabled: Boolean = tru
             .then(if (enabled) Modifier.background(container) else Modifier.background(Color(0x55FFFFFF)))
             .border(1.5.dp, Color(0x80FFFFFF), shape)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 7.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(text, color = if (enabled) Color.White else Color(0x88FFFFFF), fontSize = 14.sp, fontWeight = FontWeight.Black)
+        Text(text, color = if (enabled) Color.White else Color(0x88FFFFFF), fontSize = 13.sp, fontWeight = FontWeight.Black)
     }
 }
-
-internal fun mjBlueBrush(): Brush =
-    Brush.verticalGradient(listOf(Color(0xFF5B8BE8), Color(0xFF3A63C0)))
 
 internal fun mjOrangeBrush(): Brush =
     Brush.verticalGradient(listOf(Color(0xFFFFC24D), Color(0xFFF07E1E)))
 
+internal fun mjBlueBrush(): Brush =
+    Brush.verticalGradient(listOf(Color(0xFF5B8BE8), Color(0xFF3A63C0)))
+
 internal fun mjGoldBrush(): Brush =
     Brush.verticalGradient(listOf(Color(0xFFFFD54F), Color(0xFFF9A825)))
 
-internal fun mjRedBrush(): Brush =
-    Brush.verticalGradient(listOf(Color(0xFFEF5350), Color(0xFFB71C1C)))
+// ================================================================ 素材小部件
 
-/** 对手信息面板：头像/名/庄/缺/听/胡 + 副露 + 手牌背 */
+/** 出牌卧牌（素材 tablemjwh0 + 原刻字）；rotated=true 用预旋转版（左右家） */
 @Composable
-private fun MjOpponentPanel(
-    seat: com.laoxiang.ddz.data.MjSeatView,
-    horizontal: Boolean,
-    meldW: androidx.compose.ui.unit.Dp,
-    modifier: Modifier = Modifier
-) {
-    val content: @Composable ColumnScope.() -> Unit = {
+internal fun MjDiscTile(code: Int, w: Dp, rotated: Boolean = false) {
+    Image(
+        painter = painterResource(if (rotated) DISC_ROT[code.coerceIn(0, 33)] else DISC_RES[code.coerceIn(0, 33)]),
+        contentDescription = null,
+        contentScale = ContentScale.FillBounds,
+        modifier = Modifier.size(w, w)
+    )
+}
+
+/** 卧牌背（对家手牌，素材 cc1） */
+@Composable
+internal fun MjBackLie(w: Dp) {
+    Image(
+        painter = painterResource(R.drawable.mj_back_lie),
+        contentDescription = null,
+        contentScale = ContentScale.FillBounds,
+        modifier = Modifier.size(w, w)
+    )
+}
+
+/** 立牌背（左右家手牌，素材 cc2） */
+@Composable
+internal fun MjBackStand(w: Dp) {
+    Image(
+        painter = painterResource(R.drawable.mj_back),
+        contentDescription = null,
+        contentScale = ContentScale.FillBounds,
+        modifier = Modifier.size(w, w * 1.5f)
+    )
+}
+
+/** 牌墙端视（素材 cemian1；vertical=左右墙立柱用预旋转版） */
+@Composable
+internal fun MjWallTile(w: Dp, vertical: Boolean) {
+    Image(
+        painter = painterResource(if (vertical) R.drawable.mj_wall_r else R.drawable.mj_wall),
+        contentDescription = null,
+        contentScale = ContentScale.FillBounds,
+        modifier = Modifier.size(w, if (vertical) w * 82f / 122f else w * 122f / 82f)
+    )
+}
+
+/** 素材金色数字串（余牌/罗盘） */
+@Composable
+internal fun NumDigits(value: Int, h: Dp) {
+    Row(horizontalArrangement = Arrangement.spacedBy(1.dp), verticalAlignment = Alignment.CenterVertically) {
+        value.toString().forEach { c ->
+            Image(
+                painter = painterResource(NUM_RES[c - '0']),
+                contentDescription = null,
+                contentScale = ContentScale.FillBounds,
+                modifier = Modifier.size(h * 25f / 32f, h)
+            )
+        }
+    }
+}
+
+/** 定缺三色圆钮 */
+@Composable
+internal fun MjSuitCircle(suit: Int, label: String, colors: List<Color>, size: Dp, onPick: (Int) -> Unit) {
+    Box(
+        Modifier
+            .shadow(6.dp, CircleShape)
+            .size(size)
+            .clip(CircleShape)
+            .background(Brush.verticalGradient(colors))
+            .border(2.5.dp, Color(0xE6FFFFFF), CircleShape)
+            .clickable { onPick(suit) },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            label,
+            color = Color.White, fontSize = 20.sp,
+            fontWeight = FontWeight.Black
+        )
+    }
+}
+
+// ================================================================ 玩家信息卡
+
+@Composable
+internal fun MjPlayerCard(seat: MjSeatView, isMe: Boolean, modifier: Modifier = Modifier) {
+    Column(
+        modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             AvatarImage(
-                seat.avatar, 42.dp,
+                seat.avatar, if (isMe) 44.dp else 40.dp,
                 Modifier.border(
                     2.5.dp,
                     if (seat.isTurn) Color(0xFFFFC107) else Color(0x66FFFFFF),
                     CircleShape
                 )
             )
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(5.dp))
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         seat.name,
-                        fontSize = 11.sp,
-                        color = if (seat.isTurn) Color(0xFFFFE082) else Color(0xCCFFFFFF),
-                        maxLines = 1
+                        fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                        color = if (seat.isTurn) Color(0xFFFFE082) else Color.White,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 72.dp)
                     )
                     if (seat.isDealer) {
                         Spacer(Modifier.width(3.dp))
@@ -566,29 +850,27 @@ private fun MjOpponentPanel(
                             painter = painterResource(R.drawable.mj_mark_zhuang),
                             contentDescription = "庄家",
                             contentScale = ContentScale.FillBounds,
-                            modifier = Modifier.size(15.dp)
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                     if (seat.huRank > 0) {
-                        Spacer(Modifier.width(4.dp))
+                        Spacer(Modifier.width(3.dp))
                         Text("胡", fontSize = 11.sp, color = Gold, fontWeight = FontWeight.Black)
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("剩 ${seat.handCount}", fontSize = 10.sp, color = Color(0x99FFFFFF))
                     if (seat.dingque >= 0) {
-                        Spacer(Modifier.width(4.dp))
                         Text(
-                            "缺${suitLabel(seat.dingque)}", fontSize = 9.sp,
+                            "缺${suitLabel(seat.dingque)}", fontSize = 10.sp,
                             color = Color(0xFF80DEEA),
                             modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Color(0x33123A6E))
-                                .padding(horizontal = 3.dp, vertical = 0.5.dp)
+                                .clip(RoundedCornerShape(5.dp))
+                                .background(Color(0x59002438))
+                                .padding(horizontal = 4.dp, vertical = 1.dp)
                         )
                     }
                     if (seat.ting) {
-                        Spacer(Modifier.width(3.dp))
+                        Spacer(Modifier.width(4.dp))
                         Image(
                             painter = painterResource(R.drawable.mj_mark_ting),
                             contentDescription = "听牌",
@@ -596,131 +878,18 @@ private fun MjOpponentPanel(
                             modifier = Modifier.size(14.dp)
                         )
                     }
-                }
-            }
-        }
-        // 副露
-        if (seat.melds.isNotEmpty()) {
-            Spacer(Modifier.height(3.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                seat.melds.forEach { m -> MjMeldRow(m, meldW * 0.82f) }
-            }
-        }
-        // 手牌背（对家横排；左右竖排）
-        Spacer(Modifier.height(3.dp))
-        if (horizontal) {
-            Row(horizontalArrangement = Arrangement.spacedBy((-2).dp)) {
-                repeat(seat.handCount.coerceAtMost(13)) {
-                    MjTileView(null, 15.dp, alpha = 0.92f)
-                }
-            }
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy((-14).dp)) {
-                repeat(seat.handCount.coerceAtMost(13)) {
-                    MjTileView(null, 15.dp, alpha = 0.92f)
-                }
-            }
-        }
-    }
-    if (horizontal) {
-        Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, content = content)
-    } else {
-        Column(modifier, horizontalAlignment = Alignment.Start, content = content)
-    }
-}
-
-/** 一组副露（碰/杠/吃小牌排） */
-@Composable
-private fun MjMeldRow(m: MjMeld, w: androidx.compose.ui.unit.Dp) {
-    Row(horizontalArrangement = Arrangement.spacedBy((-w.value * 0.28f).dp)) {
-        m.tiles.forEach { t -> MjTileView(t, w) }
-    }
-}
-
-/** 牌河 */
-@Composable
-private fun MjRiver(
-    river: List<MjTile>,
-    w: androidx.compose.ui.unit.Dp,
-    vertical: Boolean,
-    modifier: Modifier = Modifier
-) {
-    if (river.isEmpty()) return
-    val chunked = river.chunked(if (vertical) 3 else 8)
-    if (vertical) {
-        Column(
-            modifier
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            chunked.forEach { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    row.forEach { t -> MjTileView(t, w) }
-                }
-            }
-        }
-    } else {
-        Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            chunked.take(3).forEach { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    row.forEach { t -> MjTileView(t, w) }
+                    if (seat.isAi) {
+                        Spacer(Modifier.width(4.dp))
+                        Text("AI", fontSize = 9.sp, color = Color(0x88FFFFFF))
+                    }
                 }
             }
         }
     }
 }
 
-/** 吃碰杠胡宣告条 */
-@Composable
-private fun MjClaimBar(
-    claims: List<MjClaimOpt>,
-    modifier: Modifier = Modifier,
-    onClaim: (MjClaimOpt) -> Unit,
-    onPass: () -> Unit
-) {
-    Row(
-        modifier
-            .shadow(6.dp, RoundedCornerShape(16.dp))
-            .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xE612305C))
-            .border(1.5.dp, Color(0x66A8C8F0), RoundedCornerShape(16.dp))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        claims.forEach { opt ->
-            when (opt.kind) {
-                "HU" -> MjImageButton(R.drawable.mj_btn_hu, 56.dp) { onClaim(opt) }
-                "GANG" -> MjImageButton(R.drawable.mj_btn_gang, 56.dp) { onClaim(opt) }
-                "PENG" -> MjImageButton(R.drawable.mj_btn_peng, 56.dp) { onClaim(opt) }
-                "CHI" -> MjImageButton(R.drawable.mj_btn_chi, 56.dp) { onClaim(opt) }
-            }
-        }
-        MjImageButton(R.drawable.mj_btn_pass, 50.dp) { onPass() }
-    }
-}
+// ================================================================ 结算浮层
 
-/** 定缺选择条 */
-@Composable
-private fun MjDingQueBar(modifier: Modifier = Modifier, onPick: (Int) -> Unit) {
-    Row(
-        modifier
-            .shadow(6.dp, RoundedCornerShape(16.dp))
-            .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xE612305C))
-            .border(1.5.dp, Color(0x66A8C8F0), RoundedCornerShape(16.dp))
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text("定缺：", color = Color(0xFFEBCB8C), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-        listOf(0 to "缺万", 1 to "缺筒", 2 to "缺条").forEach { (suit, label) ->
-            MjPillButton(label, mjBlueBrush()) { onPick(suit) }
-        }
-    }
-}
-
-/** 结算浮层（血战多赢家 / 流局查叫） */
 @Composable
 private fun MjResultOverlay(
     snap: MjSnapshot,
@@ -743,7 +912,6 @@ private fun MjResultOverlay(
         ) {
             Text(
                 when {
-                    result.liuju && myDelta >= 0 -> "流 局"
                     result.liuju -> "流 局"
                     iWon -> "赢 了 ！"
                     else -> "输 了 …"
@@ -783,7 +951,7 @@ private fun MjResultOverlay(
                                 Text(
                                     detail?.let { d ->
                                         d.fans.joinToString(" ").ifBlank { "平胡" } + " · 共${d.total}番"
-                                    } ?: if (result.liuju) "未胡" else "未胡",
+                                    } ?: "未胡",
                                     fontSize = 10.sp, color = Color(0x99FFE0B2)
                                 )
                             }
