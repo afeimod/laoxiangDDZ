@@ -86,18 +86,22 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         val W = maxWidth
         val H = maxHeight
         val frame = W * 0.0285f                     // 环境留白基准
-        val handW = (W * 0.056f).coerceAtMost(H * 0.125f)    // 大手牌（参考图 154px@2400，参考 APK 89px@1280）
+        val handW = (W * 0.0546f).coerceAtMost(H * 0.12f)   // 大手牌（参考图 131px@2400，贴底无缝）
         val handH = handW * 1.382f
-        val meldW = handW * 0.74f                   // 我的副露（立牌小一号，参考 APK 0.573 比例）
-        val meldTopW = W * 0.0235f                  // 对家副露（立牌）
-        val riverW = W * 0.030f                     // 牌河横躺牌宽（白脸+象牙侧壁）
-        val wallW = W * 0.0275f                     // 上方牌墙立牌（双层）
-        val wallH = wallW * 1.30f
-        val sideW0 = W * 0.0295f                    // 左右家侧墙立牌（透视缩放基准）
-        val sideH0 = sideW0 * 1.42f
-        val sideMeldW = W * 0.0255f                 // 左右家副露横躺牌
-        val plateW = W * 0.129f                     // 罗盘面板
+        val meldW = handW * 0.78f                   // 我的副露（立牌小一号）
+        val riverW = W * 0.0233f                    // 牌河横躺牌宽（参考图 56px@2400）
+        val discH = riverW * 1.32f                  // 横躺牌总高（白脸+象牙侧壁+绿底线）
+        val wallW = W * 0.0206f                     // 上墙立牌宽（47px@2400，13 张紧贴）
+        val wallH = wallW * 1.36f
+        val sideW = W * 0.0118f                     // 侧墙立牌宽（28px@2400，17 张沿对角线）
+        val sideH = sideW * 1.52f
+        val plateW = W * 0.125f                     // 罗盘面板
         val plateH = plateW * 472f / 616f
+        // 罗盘几何（参考图：中心 (0.5W, 0.455H)，四家牌河围绕成环）
+        val plateLeft = W / 2f - plateW / 2f
+        val plateRight = W / 2f + plateW / 2f
+        val plateTop = H * 0.455f - plateH / 2f
+        val plateBottom = H * 0.455f + plateH / 2f
 
         val snap = snapshot ?: run {
             Text(
@@ -218,145 +222,158 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             }
         }
 
-        // ================= 对家：双层立牌墙（白顶盖+亮绿牌背，发牌时依次亮起） =================
-        Box(
+        // ================= 对家：顶墙单排 13 张立牌（白顶盖+亮绿牌背，紧贴，参考图） =================
+        Row(
             Modifier
                 .align(Alignment.TopCenter)
-                .offset(y = H * 0.046f)
+                .offset(y = H * 0.064f),
+            horizontalArrangement = Arrangement.spacedBy(0.dp)
         ) {
-            // 后排：顶盖从前排上方露出（参考图双层墙效果）
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(1.dp),
-                modifier = Modifier.offset(x = wallW * 0.18f, y = -wallH * 0.27f)
-            ) {
-                repeat(top.handCount.coerceIn(1, 14)) { idx ->
-                    Box(
-                        Modifier.graphicsLayer {
-                            val x = ((deal.value * 840f - idx * 40f) / 280f).coerceIn(0f, 1f)
-                            alpha = (0.25f + 0.75f * x) * 0.94f
-                            val s = 0.7f + 0.3f * x
-                            scaleX = s; scaleY = s
-                        }
-                    ) { MjWallBackTile(wallW) }
-                }
-            }
-            // 前排
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(1.dp),
-                modifier = Modifier.offset(y = wallH * 0.15f)
-            ) {
-                repeat(top.handCount.coerceIn(1, 14)) { idx ->
-                    Box(
-                        Modifier.graphicsLayer {
-                            val x = ((deal.value * 840f - idx * 40f) / 280f).coerceIn(0f, 1f)
-                            alpha = 0.25f + 0.75f * x
-                            val s = 0.7f + 0.3f * x
-                            scaleX = s; scaleY = s
-                        }
-                    ) { MjWallBackTile(wallW) }
+            repeat(13) { idx ->
+                Box(
+                    Modifier.graphicsLayer {
+                        val x = ((deal.value * 840f - idx * 40f) / 280f).coerceIn(0f, 1f)
+                        alpha = 0.25f + 0.75f * x
+                    }
+                ) {
+                    Image(
+                        painter = painterResource(R.drawable.mj_wall_back),
+                        contentDescription = null,
+                        contentScale = ContentScale.FillBounds,
+                        modifier = Modifier.size(wallW, wallH)
+                    )
                 }
             }
         }
-        // 对家副露（顶部右侧，立牌小一号）
-        if (top.melds.isNotEmpty()) {
-            Row(
+
+        // ============ 左/右牌墙：17 张立牌沿对角线（白面朝外、绿背朝桌心，参考图实测对角线） ============
+        listOf(false, true).forEach { isRight ->
+            val nSide = 17
+            val topX = if (isRight) W * 0.745f else W * 0.255f
+            val topY = H * 0.191f
+            val botX = if (isRight) W * 0.7845f else W * 0.2155f
+            val botY = H * 0.684f
+            Box(Modifier.align(Alignment.TopStart).fillMaxSize()) {
+                repeat(nSide) { idx ->
+                    val t = idx / (nSide - 1).toFloat()
+                    val cx = topX + (botX - topX) * t
+                    val cy = topY + (botY - topY) * t
+                    Image(
+                        painter = painterResource(
+                            if (isRight) R.drawable.mj_wall_side_r else R.drawable.mj_wall_side_l
+                        ),
+                        contentDescription = null,
+                        contentScale = ContentScale.FillBounds,
+                        modifier = Modifier
+                            .offset(x = cx - sideW / 2f, y = cy - sideH / 2f)
+                            .size(sideW, sideH)
+                            .graphicsLayer {
+                                val x = ((deal.value * 840f - idx * 40f) / 280f).coerceIn(0f, 1f)
+                                alpha = 0.25f + 0.75f * x
+                            }
+                    )
+                }
+            }
+        }
+
+        // ============ 四家牌河 + 副露：围绕罗盘成环（参考 APK 环形布局 + 参考图位置） ============
+        // 对家：副露行在上、牌河行在下（行 8 张，刻字倒置 dir=2），整体底边贴罗盘上沿
+        val topAll = top.melds.flatMap { it.tiles }.map { it.code } + top.river.map { it.code }
+        val topRows = topAll.chunked(8).takeLast(2)
+        val topRowPitch = discH * 0.88f
+        if (topRows.isNotEmpty()) {
+            val topBlockH = topRowPitch * (topRows.size - 1) + discH
+            Column(
                 Modifier
-                    .align(Alignment.TopEnd)
-                    .offset(y = H * 0.115f)
-                    .padding(end = W * 0.05f),
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .align(Alignment.TopCenter)
+                    .offset(y = plateTop - topBlockH - H * 0.008f),
+                verticalArrangement = Arrangement.spacedBy(topRowPitch - discH),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                top.melds.forEach { m -> m.tiles.forEach { t -> MjDiscTile(t.code, meldTopW, lying = false) } }
-            }
-        }
-        // 对家牌河（牌墙下方，最新一排靠中央，末张描金边）
-        val topRiverRows = top.river.chunked(7).takeLast(2)
-        val topRiverStart = top.river.size - topRiverRows.sumOf { it.size }
-        Column(
-            Modifier
-                .align(Alignment.TopCenter)
-                .offset(y = H * 0.175f),
-            verticalArrangement = Arrangement.spacedBy(3.dp)
-        ) {
-            var gi = topRiverStart
-            topRiverRows.forEach { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                    row.forEach { t ->
-                        MjDiscTile(t.code, riverW, highlight = gi++ == top.river.size - 1)
+                topRows.forEachIndexed { ri, row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(riverW * 0.16f)) {
+                        row.forEachIndexed { i, code ->
+                            MjDiscTile(
+                                code, riverW, dir = 2,
+                                highlight = top.river.isNotEmpty() &&
+                                    ri == topRows.lastIndex && i == row.lastIndex
+                            )
+                        }
                     }
                 }
             }
         }
 
-        // ================= 上家（左）/ 下家（右）：沿梯形斜边透视缩放立牌侧墙 + 副露 + 牌河 =================
-        listOf(left to false, right to true).forEach { (seat, isRight) ->
-            // 侧墙：近大远小沿对角线排布（参考图左/右墙样式，白顶盖朝外侧）
-            val backs = seat.handCount.coerceIn(8, 13)
-            val nearX = if (isRight) W * 0.928f else W * 0.072f
-            val nearY = H * 0.835f
-            val farX = if (isRight) W * 0.768f else W * 0.232f
-            val farY = H * 0.170f
-            val stepT = 1f / (backs - 1).coerceAtLeast(1)
-            Box(Modifier.align(Alignment.TopStart).fillMaxSize()) {
-                repeat(backs) { idx ->
-                    val t = idx * stepT
-                    val px = nearX + (farX - nearX) * t
-                    val py = nearY + (farY - nearY) * t
-                    val sc = 1.02f - 0.26f * t
-                    Box(
-                        Modifier
-                            .offset(x = px - sideW0 * sc * 0.5f, y = py - sideH0 * sc * 0.5f)
-                            .size(sideW0 * sc, sideH0 * sc)
-                            .graphicsLayer {
-                                val x = ((deal.value * 840f - idx * 40f) / 280f).coerceIn(0f, 1f)
-                                alpha = 0.25f + 0.75f * x
-                                val s = 0.7f + 0.3f * x
-                                scaleX = s; scaleY = s
-                            }
-                    ) { MjWallSideTile(sideW0 * sc, isRight) }
-                }
-            }
-            // 副露：斜墙下端内侧，横躺牌（刻字随牌体旋转），超过 6 张分双列
-            if (seat.melds.isNotEmpty()) {
-                Row(
-                    Modifier
-                        .align(if (isRight) Alignment.TopEnd else Alignment.TopStart)
-                        .offset(
-                            x = if (isRight) -W * 0.205f else W * 0.145f,
-                            y = H * 0.52f
-                        ),
-                    horizontalArrangement = Arrangement.spacedBy(3.dp)
-                ) {
-                    seat.melds.flatMap { it.tiles }.chunked(6).forEach { col ->
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            col.forEach { t ->
-                                MjDiscTile(t.code, sideMeldW, dir = if (isRight) 1 else -1)
-                            }
+        // 左家：牌河列贴罗盘左沿（列 5 张，横躺牌刻字朝左 dir=-1），副露列在外侧；列向左生长
+        val leftCols = (left.melds.flatMap { it.tiles }.map { it.code } + left.river.map { it.code })
+            .chunked(5).takeLast(5)
+        if (leftCols.isNotEmpty()) {
+            val colPitchX = discH * 0.94f
+            val colPitchY = riverW * 0.98f
+            val leftBlockW = colPitchX * (leftCols.size - 1) + discH
+            Row(
+                Modifier
+                    .align(Alignment.TopStart)
+                    .offset(x = plateLeft - W * 0.018f - leftBlockW, y = H * 0.295f),
+                horizontalArrangement = Arrangement.spacedBy(colPitchX - discH)
+            ) {
+                leftCols.forEachIndexed { ci, col ->
+                    Column(verticalArrangement = Arrangement.spacedBy(colPitchY - riverW)) {
+                        col.forEachIndexed { i, code ->
+                            MjDiscTile(
+                                code, riverW, dir = -1,
+                                highlight = left.river.isNotEmpty() &&
+                                    ci == leftCols.lastIndex && i == col.lastIndex
+                            )
                         }
                     }
                 }
             }
-            // 牌河：竖排横躺牌（末张描金边），贴斜墙内侧
-            val riverCols = seat.river.chunked(6).takeLast(2)
-            val riverStart = seat.river.size - riverCols.sumOf { it.size }
+        }
+
+        // 右家：镜像（列贴罗盘右沿，刻字朝右 dir=+1），最新列最靠内（贴罗盘）
+        val rightMeldCols = right.melds.flatMap { it.tiles }.map { it.code }.chunked(5).takeLast(2)
+        val rightRiverCols = right.river.map { it.code }.chunked(5).takeLast(3).asReversed()
+        val rightCols = rightRiverCols + rightMeldCols
+        if (rightCols.isNotEmpty()) {
+            val colPitchX = discH * 0.94f
+            val colPitchY = riverW * 0.98f
             Row(
                 Modifier
-                    .align(if (isRight) Alignment.TopEnd else Alignment.TopStart)
-                    .offset(
-                        x = if (isRight) -W * 0.325f else W * 0.265f,
-                        y = H * 0.345f
-                    ),
-                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    .align(Alignment.TopStart)
+                    .offset(x = plateRight + W * 0.018f, y = H * 0.295f),
+                horizontalArrangement = Arrangement.spacedBy(colPitchX - discH)
             ) {
-                var gi = riverStart
-                riverCols.forEach { col ->
-                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        col.forEach { t ->
+                rightCols.forEachIndexed { ci, col ->
+                    Column(verticalArrangement = Arrangement.spacedBy(colPitchY - riverW)) {
+                        col.forEachIndexed { i, code ->
                             MjDiscTile(
-                                t.code, riverW * 0.94f,
-                                dir = if (isRight) 1 else -1,
-                                highlight = gi++ == seat.river.size - 1
+                                code, riverW, dir = 1,
+                                highlight = right.river.isNotEmpty() &&
+                                    ci == 0 && i == col.lastIndex
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 我的牌河：罗盘下沿居中（行 8 张，正立刻字），行向下生长
+        val myRiverRows = me.river.map { it.code }.chunked(8).takeLast(2)
+        if (myRiverRows.isNotEmpty()) {
+            Column(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .offset(y = plateBottom + H * 0.012f),
+                verticalArrangement = Arrangement.spacedBy(discH * 0.10f),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                myRiverRows.forEachIndexed { ri, row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(riverW * 0.16f)) {
+                        row.forEachIndexed { i, code ->
+                            MjDiscTile(
+                                code, riverW,
+                                highlight = ri == myRiverRows.lastIndex && i == row.lastIndex
                             )
                         }
                     }
@@ -365,7 +382,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         }
 
         // ================= 中央罗盘（方形金属面板）+ 剩余数 + 局数 =================
-        val plateOffsetY = -H * 0.023f
+        val plateOffsetY = H * 0.455f - H / 2f
         val density = LocalDensity.current
         Box(
             Modifier
@@ -439,28 +456,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             )
         }
 
-        // ================= 我的牌河（手牌上方横躺牌，最新靠上排末端描金边） =================
-        val myRiverRows = me.river.chunked(7).takeLast(2)
-        val myRiverStart = me.river.size - myRiverRows.sumOf { it.size }
-        Column(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .offset(
-                    x = W * 0.10f,
-                    y = -(handH + 12.dp)
-                ),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
-            horizontalAlignment = Alignment.End
-        ) {
-            var gi = myRiverStart
-            myRiverRows.forEach { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                    row.forEach { t ->
-                        MjDiscTile(t.code, riverW, highlight = gi++ == me.river.size - 1)
-                    }
-                }
-            }
-        }
+        // （我的牌河已移至罗盘下方居中，见上）
 
         // ================= 手牌 + 副露（大牌贴底、牌与牌紧贴，轮到我时摸到的末张隔开，参考 APK/图 2） =================
         val hand = me.hand.sortedBy { it.code }
@@ -817,8 +813,10 @@ internal fun mjGoldBrush(): Brush =
  * 出牌/副露贴图：
  * lying=true 横躺牌 —— 白脸面 + 象牙侧壁 + 绿底线 + 投影（参考图牌河样式）；
  * lying=false 立牌 —— 直接贴 mj_* 立体牌面（手牌同款）。
- * dir=±1 整体旋转 90°（刻字随牌体一起转）：左家 dir=-1（字头朝左）/ 右家 dir=+1（字头朝右）。
+ * dir=0 正立（我方）；dir=±1 整体旋转 90°（刻字随牌体一起转）：左家 dir=-1（字头朝左）/ 右家 dir=+1（字头朝右）；
+ * dir=2 旋转 180°（对家，刻字倒置，参考 APK DrawCCMj mode 2）。
  * highlight=true 最新出牌描金边（参考 APK 出牌高亮框）。
+ * 躺牌比例按参考图实测：总高/宽 = 1.32（56:74@2400）。
  */
 @Composable
 internal fun MjDiscTile(code: Int, w: Dp, dir: Int = 0, lying: Boolean = true, highlight: Boolean = false) {
@@ -834,12 +832,12 @@ internal fun MjDiscTile(code: Int, w: Dp, dir: Int = 0, lying: Boolean = true, h
         }
         return
     }
-    val faceH = w * 0.84f
-    val sideH = w * 0.14f
-    val baseH = w * 0.05f
+    val faceH = w * 1.06f
+    val sideH = w * 0.19f
+    val baseH = w * 0.07f
     val totalH = faceH + sideH + baseH
     val shape = RoundedCornerShape(w * 0.16f)
-    val outer = if (dir == 0) Modifier.size(w, totalH) else Modifier.size(totalH, w)
+    val outer = if (dir == 0 || dir == 2) Modifier.size(w, totalH) else Modifier.size(totalH, w)
     Box(modifier = outer, contentAlignment = Alignment.Center) {
         Box(
             Modifier
@@ -880,69 +878,6 @@ internal fun MjDiscTile(code: Int, w: Dp, dir: Int = 0, lying: Boolean = true, h
                 )
             }
         }
-    }
-}
-
-/** 牌墙立牌（上/前方）：白顶盖 + 亮绿牌背（参考图上墙样式） */
-@Composable
-internal fun MjWallBackTile(w: Dp) {
-    val h = w * 1.30f
-    Canvas(Modifier.size(w, h)) {
-        val capH = size.width * 0.30f
-        val r = size.width * 0.20f
-        // 绿色牌身（顶部藏在白盖后面）
-        drawRoundRect(
-            brush = Brush.verticalGradient(listOf(Color(0xFF4CBA5B), Color(0xFF1D7A31))),
-            topLeft = Offset(0f, capH * 0.55f),
-            size = Size(size.width, size.height - capH * 0.55f),
-            cornerRadius = CornerRadius(r, r)
-        )
-        // 右下暗边（立体感）
-        drawRoundRect(
-            color = Color(0x2E000000),
-            topLeft = Offset(size.width * 0.80f, capH * 0.55f),
-            size = Size(size.width * 0.20f, size.height - capH * 0.55f),
-            cornerRadius = CornerRadius(r, r)
-        )
-        // 白顶盖（牌顶面受光）
-        drawRoundRect(
-            brush = Brush.verticalGradient(listOf(Color(0xFFFBF9EE), Color(0xFFD8D5BF))),
-            topLeft = Offset(size.width * 0.05f, 0f),
-            size = Size(size.width * 0.90f, capH),
-            cornerRadius = CornerRadius(r * 0.7f, r * 0.7f)
-        )
-    }
-}
-
-/** 牌墙侧立牌（左/右家）：白顶盖朝外侧 + 绿牌身，竖长条 */
-@Composable
-internal fun MjWallSideTile(w: Dp, isRight: Boolean) {
-    val h = w * 1.42f
-    Canvas(Modifier.size(w, h)) {
-        val capW = size.width * 0.34f
-        val r = size.width * 0.20f
-        // 绿色牌身
-        val bodyLeft = if (isRight) 0f else capW * 0.52f
-        drawRoundRect(
-            brush = Brush.horizontalGradient(
-                if (isRight) listOf(Color(0xFF1D7A31), Color(0xFF4CBA5B))
-                else listOf(Color(0xFF4CBA5B), Color(0xFF1D7A31))
-            ),
-            topLeft = Offset(bodyLeft, 0f),
-            size = Size(size.width - bodyLeft, size.height),
-            cornerRadius = CornerRadius(r, r)
-        )
-        // 白顶盖（外侧受光面）
-        val capLeft = if (isRight) size.width - capW else 0f
-        drawRoundRect(
-            brush = Brush.horizontalGradient(
-                if (isRight) listOf(Color(0xFFD8D5BF), Color(0xFFFBF9EE))
-                else listOf(Color(0xFFFBF9EE), Color(0xFFD8D5BF))
-            ),
-            topLeft = Offset(capLeft, size.height * 0.03f),
-            size = Size(capW, size.height * 0.94f),
-            cornerRadius = CornerRadius(r * 0.7f, r * 0.7f)
-        )
     }
 }
 
