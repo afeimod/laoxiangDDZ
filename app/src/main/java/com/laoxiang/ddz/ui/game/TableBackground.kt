@@ -59,10 +59,53 @@ object TableBg {
 }
 
 /**
+ * 项目专属刻字水印（"老乡XX"凹陷风），供各玩法桌面复用。
+ * [engraving]：游戏专属刻字（如"老乡跑得快"），覆盖在背景之上。
+ */
+@Composable
+fun TableEngraving(text: String, modifier: Modifier = Modifier) {
+    Box(modifier, contentAlignment = Alignment.Center) {
+        // 双层错位营造"刻字"凹陷感：暗影层 + 高光层 + 主字层
+        Text(
+            text,
+            fontSize = 46.sp,
+            fontWeight = FontWeight.Black,
+            letterSpacing = 6.sp,
+            style = TextStyle(
+                shadow = Shadow(
+                    color = Color(0x66000000),
+                    offset = Offset(3f, 3f),
+                    blurRadius = 6f
+                )
+            ),
+            color = Color(0x2EFFFFFF),
+            modifier = Modifier.graphicsLayer {
+                rotationZ = -6f
+                scaleX = 1.06f; scaleY = 1.06f
+            }
+        )
+        Text(
+            text,
+            fontSize = 46.sp,
+            fontWeight = FontWeight.Black,
+            letterSpacing = 6.sp,
+            style = TextStyle(
+                shadow = Shadow(
+                    color = Color(0x4D000000),
+                    offset = Offset(0f, 4f),
+                    blurRadius = 10f
+                )
+            ),
+            color = Color(0x30FFFFFF),
+            modifier = Modifier.graphicsLayer { rotationZ = -6f }
+        )
+    }
+}
+
+/**
  * 牌桌背景图层。
  * key=custom 且本地有图时异步解码加载（超大相册图按 ~1920 降采样），
  * 加载完成前先给深蓝底色兜底；其余 key 直接用内置图。
- * [engraving]：游戏专属刻字水印（如"老乡跑得快"），覆盖在内置/自定义背景之上。
  */
 @Composable
 fun TableBackground(bgKey: String, modifier: Modifier = Modifier, engraving: String? = null) {
@@ -94,42 +137,7 @@ fun TableBackground(bgKey: String, modifier: Modifier = Modifier, engraving: Str
         )
     }
     if (!engraving.isNullOrBlank()) {
-        Box(modifier, contentAlignment = Alignment.Center) {
-            // 双层错位营造"刻字"凹陷感：暗影层 + 高光层 + 主字层
-            Text(
-                engraving,
-                fontSize = 46.sp,
-                fontWeight = FontWeight.Black,
-                letterSpacing = 6.sp,
-                style = TextStyle(
-                    shadow = Shadow(
-                        color = Color(0x66000000),
-                        offset = Offset(3f, 3f),
-                        blurRadius = 6f
-                    )
-                ),
-                color = Color(0x2EFFFFFF),
-                modifier = Modifier.graphicsLayer {
-                    rotationZ = -6f
-                    scaleX = 1.06f; scaleY = 1.06f
-                }
-            )
-            Text(
-                engraving,
-                fontSize = 46.sp,
-                fontWeight = FontWeight.Black,
-                letterSpacing = 6.sp,
-                style = TextStyle(
-                    shadow = Shadow(
-                        color = Color(0x4D000000),
-                        offset = Offset(0f, 4f),
-                        blurRadius = 10f
-                    )
-                ),
-                color = Color(0x30FFFFFF),
-                modifier = Modifier.graphicsLayer { rotationZ = -6f }
-            )
-        }
+        TableEngraving(engraving, modifier)
     }
 }
 

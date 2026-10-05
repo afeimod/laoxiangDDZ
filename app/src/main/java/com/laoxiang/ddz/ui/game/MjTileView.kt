@@ -171,13 +171,15 @@ internal fun MjTableTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifi
             contentScale = ContentScale.FillBounds,
             modifier = Modifier.size(boxW, boxH)
         )
-        // APK 偏移常量（相对白胚左上角，1280 设计空间）：
-        // dir0 面左上 (0,-10)；dir1 中心 (29.2,33)；dir2 中心 (25.5,35.3)；dir3 中心 (36.8,33)
+        // APK DrawCCMj 偏移常量（1280 设计空间，面 51.0x73.34u）:
+        // dir0 面左上 (0,-10)；dir1 面中心 (29.17,33)；dir2 面中心 (25.5,35.33)；dir3 面中心 (36.83,33)
+        // APK drawByScale 旋转锚点 = (x+原图宽/2, y+原图高/2)，换算成 Compose 绕自身中心旋转:
+        // 未旋转图左上 = 最终中心 - (半宽25.5, 半高36.67)
         val (ox, oy) = when (dir) {
             0 -> 0f to -10f
-            1 -> 29.2f - 44.5f to 33f - 64f          // 中心 - 未旋转尺寸一半
-            2 -> 25.5f - 44.5f to 35.3f - 64f
-            else -> 36.8f - 44.5f to 33f - 64f
+            1 -> 29.17f - 25.5f to 33f - 36.67f       // (3.67, -3.67)
+            2 -> 25.5f - 25.5f to 35.33f - 36.67f     // (0, -1.34)
+            else -> 36.83f - 25.5f to 33f - 36.67f    // (11.33, -3.67)
         }
         Image(
             painter = painterResource(psmjRes(code)),
@@ -192,25 +194,33 @@ internal fun MjTableTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifi
 }
 
 /**
- * 小牌合成（APK drawSmallMj 1:1）：白胚 0.8 + 面 0.4584 缩放旋转（他家手牌/副露）。
- * 占位：dir0/2 = 40.8x60.8u，dir1/3 = 51.2x51.2u。
+ * 小牌合成（APK drawSmallMj 1:1）：白胚 0.8 + 面 0.4584 缩放旋转（他家副露）。
+ * 字节码实测（与 DrawCCMj 同构 case0→体x … case3→体y）：
+ * dir0 体=tablemjh0(51x76)*0.8 立牌 + 面 rot0 左上(0,-4)；
+ * dir1 体=tablemjwh0(64x64)*0.8 横躺 + 面 rot270 中心(23.84,26.1)；
+ * dir2 体=tablemjnh0(51x76)*0.8 立牌 + 面 rot180 中心(21.6,30.66)；
+ * dir3 体=tablemjeh0(64x64)*0.8 横躺 + 面 rot90 中心(29.16,25.9)。
+ * Compose 绕自身中心旋转 → 未旋转左上 = 中心 - (面缩放半宽20.4, 半高29.34)。
  */
 @Composable
 internal fun MjSmallTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifier) {
-    val uprightW = u * 51f * 0.8f       // 40.8u
-    val uprightH = u * 76f * 0.8f       // 60.8u
-    val lieW = u * 64f * 0.8f           // 51.2u
-    val boxW = if (dir == 1 || dir == 3) lieW else uprightW
-    val boxH = if (dir == 1 || dir == 3) lieW else uprightH
-    val fw = u * 89f * 0.4584f          // 40.8u
-    val fh = u * 128f * 0.4584f         // 58.7u
     val bodyRes = when (dir) {
         1 -> R.drawable.tablemjwh0
         2 -> R.drawable.tablemjnh0
         3 -> R.drawable.tablemjeh0
         else -> R.drawable.tablemjh0
     }
+    val boxW = if (dir == 1 || dir == 3) u * 64f * 0.8f else u * 51f * 0.8f
+    val boxH = if (dir == 1 || dir == 3) u * 64f * 0.8f else u * 76f * 0.8f
+    val fw = u * 89f * 0.4584f          // 40.8u
+    val fh = u * 128f * 0.4584f         // 58.68u
     val rotation = when (dir) { 1 -> 270f; 2 -> 180f; 3 -> 90f; else -> 0f }
+    val (ox, oy) = when (dir) {
+        1 -> 23.84f - 20.4f to 26.1f - 29.34f      // (3.44, -3.24)
+        2 -> 21.6f - 20.4f to 30.66f - 29.34f      // (1.2, 1.32)
+        3 -> 29.16f - 20.4f to 25.9f - 29.34f      // (8.76, -3.44)
+        else -> 0f to -4f
+    }
     Box(modifier.size(boxW, boxH)) {
         Image(
             painter = painterResource(bodyRes),
@@ -218,13 +228,6 @@ internal fun MjSmallTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifi
             contentScale = ContentScale.FillBounds,
             modifier = Modifier.size(boxW, boxH)
         )
-        // APK 偏移常量：dir0 面左上 (0,-4)；dir1 中心 (23.84,26.1)；dir2 中心 (21.6,30.66)；dir3 中心 (29.16,25.9)
-        val (ox, oy) = when (dir) {
-            0 -> 0f to -4f
-            1 -> 23.84f - 44.5f to 26.1f - 64f
-            2 -> 21.6f - 44.5f to 30.66f - 64f
-            else -> 29.16f - 44.5f to 25.9f - 64f
-        }
         Image(
             painter = painterResource(psmjRes(code)),
             contentDescription = null,
@@ -261,6 +264,20 @@ internal fun MjGangCover(u: Dp, modifier: Modifier = Modifier) {
         contentDescription = null,
         contentScale = ContentScale.FillBounds,
         modifier = modifier.size(u * 48f, u * 72f)
+    )
+}
+
+/** 副露暗杠背杆（APK：上家=v[0] cc2 1:1 48x72；右/左家=v[1] cc1 0.9缩放 60x60→54 方） */
+@Composable
+internal fun MjMeldBack(top: Boolean, u: Dp, modifier: Modifier = Modifier) {
+    Image(
+        painter = painterResource(if (top) R.drawable.mjcc2 else R.drawable.mjcc1),
+        contentDescription = null,
+        contentScale = ContentScale.FillBounds,
+        modifier = modifier.size(
+            if (top) u * 48f else u * 60f * 0.9f,
+            if (top) u * 72f else u * 60f * 0.9f
+        )
     )
 }
 
