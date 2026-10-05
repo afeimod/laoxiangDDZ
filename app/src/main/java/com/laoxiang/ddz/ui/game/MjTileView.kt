@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
@@ -18,12 +19,32 @@ import com.laoxiang.ddz.R
 import com.laoxiang.ddz.data.MjTile
 
 /**
- * 麻将牌渲染 v4 —— 用户素材原样合成贴图（res/drawable-nodpi/mj_*.png，178x246@RGBA）。
- * 牌体 = 素材 psmmj0 白色立体牌体（含顶部绿边），刻字 = 素材 psmj1..34 原样叠加。
- * [w] 为牌宽，高 = w × 1.38202（与贴图等比 89:123）。
+ * 麻将渲染 v5 —— 完全按参考 APK（net.joygames.chinamj）素材与合成方式 1:1 移植：
+ * - 大牌（手牌，DrawMj）  = psmj0 白胚 + psmj 面 89x128 原尺寸叠加
+ * - 桌牌（牌河/副露，DrawCCMj）= 白胚 tablemj*_0 1:1 + 面 0.573 缩放旋转
+ * - 小牌（他家手牌/副露，drawSmallMj）= 白胚 0.8 + 面 0.4584 旋转
+ * - 四方向旋转角：下 0° / 右 270° / 上 180° / 左 90°（与 APK 字节码一致）
+ * - 他家手牌背面：cemian2/3/4（右/上/左）
+ * 所有偏移均取自反编译得到的常量（1280 设计空间，[u] 为每设计像素的 Dp 数）。
  */
 
-/** code(0..33) -> 牌面贴图：0..8 万 / 9..17 筒 / 18..26 条 / 27..33 东南西北中發白 */
+/** code(0..33) -> psmj 贴图资源（psmj0=白胚 1-9万 10-18索 19-27筒 28-34字 35-42花） */
+internal fun psmjRes(code: Int): Int = when (code) {
+    0 -> R.drawable.psmj1; 1 -> R.drawable.psmj2; 2 -> R.drawable.psmj3
+    3 -> R.drawable.psmj4; 4 -> R.drawable.psmj5; 5 -> R.drawable.psmj6
+    6 -> R.drawable.psmj7; 7 -> R.drawable.psmj8; 8 -> R.drawable.psmj9
+    9 -> R.drawable.psmj19; 10 -> R.drawable.psmj20; 11 -> R.drawable.psmj21
+    12 -> R.drawable.psmj22; 13 -> R.drawable.psmj23; 14 -> R.drawable.psmj24
+    15 -> R.drawable.psmj25; 16 -> R.drawable.psmj26; 17 -> R.drawable.psmj27
+    18 -> R.drawable.psmj10; 19 -> R.drawable.psmj11; 20 -> R.drawable.psmj12
+    21 -> R.drawable.psmj13; 22 -> R.drawable.psmj14; 23 -> R.drawable.psmj15
+    24 -> R.drawable.psmj16; 25 -> R.drawable.psmj17; 26 -> R.drawable.psmj18
+    27 -> R.drawable.psmj28; 28 -> R.drawable.psmj29; 29 -> R.drawable.psmj30
+    30 -> R.drawable.psmj31; 31 -> R.drawable.psmj32; 32 -> R.drawable.psmj33
+    else -> R.drawable.psmj34
+}
+
+/** code(0..33) -> 旧版单图牌面（工具条小预览用） */
 internal fun faceRes(code: Int): Int = when (code) {
     0 -> R.drawable.mj_wan1; 1 -> R.drawable.mj_wan2; 2 -> R.drawable.mj_wan3
     3 -> R.drawable.mj_wan4; 4 -> R.drawable.mj_wan5; 5 -> R.drawable.mj_wan6
@@ -39,7 +60,7 @@ internal fun faceRes(code: Int): Int = when (code) {
     else -> R.drawable.mj_bai
 }
 
-/** 单张麻将牌（tile=null 或 faceUp=false 画牌背） */
+/** 单张麻将牌（tile=null 或 faceUp=false 画牌背）—— 工具条等小尺寸预览用 */
 @Composable
 fun MjTileView(
     tile: MjTile?,
@@ -70,7 +91,6 @@ fun MjTileView(
             alpha = alpha
         )
         if (laiziMark && faceUp) {
-            // 财神标记（素材：mj_mark_caishen 30x59，竖排金字）叠在牌右上角
             Image(
                 painter = painterResource(R.drawable.mj_mark_caishen),
                 contentDescription = "癞子标记",
@@ -82,4 +102,175 @@ fun MjTileView(
             )
         }
     }
+}
+
+/**
+ * 大牌合成（APK DrawMj 1:1）：psmj0 白胚(89x123) + psmj 面(89x128) 同位叠加。
+ * [u] = 1280 设计空间每像素 Dp 值；宽 89u，高 128u。
+ */
+@Composable
+internal fun MjBigTile(
+    code: Int,
+    u: Dp,
+    modifier: Modifier = Modifier,
+    laiziMark: Boolean = false,
+    content: @Composable () -> Unit = {}
+) {
+    val w = u * 89f
+    val h = u * 128f
+    Box(modifier.size(w, h)) {
+        Image(
+            painter = painterResource(R.drawable.psmj0),
+            contentDescription = null,
+            contentScale = ContentScale.FillBounds,
+            modifier = Modifier.size(w, u * 123f)
+        )
+        Image(
+            painter = painterResource(psmjRes(code)),
+            contentDescription = null,
+            contentScale = ContentScale.FillBounds,
+            modifier = Modifier.size(w, h)
+        )
+        content()
+        if (laiziMark) {
+            Image(
+                painter = painterResource(R.drawable.mj_mark_caishen),
+                contentDescription = "癞子标记",
+                contentScale = ContentScale.FillBounds,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(end = w * 0.04f, top = w * 0.05f)
+                    .size(w * 0.26f, w * 0.26f * 59f / 30f)
+            )
+        }
+    }
+}
+
+/**
+ * 桌面牌合成（APK DrawCCMj 1:1）：白胚 1:1 + 面 0.573 缩放旋转。
+ * dir: 0=下(立牌 tablemjh0) / 1=右(横躺 tablemjwh0) / 2=上(立牌 tablemjnh0) / 3=左(横躺 tablemjeh0)
+ * 占位：dir0/2 = 51x76u，dir1/3 = 64x64u；刻字按 APK 常量偏移（部分向上/侧溢出属原版行为）。
+ */
+@Composable
+internal fun MjTableTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifier) {
+    val boxW = if (dir == 1 || dir == 3) u * 64f else u * 51f
+    val boxH = if (dir == 1 || dir == 3) u * 64f else u * 76f
+    val fw = u * 89f * 0.573f          // 51.0u
+    val fh = u * 128f * 0.573f         // 73.34u
+    val bodyRes = when (dir) {
+        1 -> R.drawable.tablemjwh0
+        2 -> R.drawable.tablemjnh0
+        3 -> R.drawable.tablemjeh0
+        else -> R.drawable.tablemjh0
+    }
+    val rotation = when (dir) { 1 -> 270f; 2 -> 180f; 3 -> 90f; else -> 0f }
+    Box(modifier.size(boxW, boxH)) {
+        Image(
+            painter = painterResource(bodyRes),
+            contentDescription = null,
+            contentScale = ContentScale.FillBounds,
+            modifier = Modifier.size(boxW, boxH)
+        )
+        // APK 偏移常量（相对白胚左上角，1280 设计空间）：
+        // dir0 面左上 (0,-10)；dir1 中心 (29.2,33)；dir2 中心 (25.5,35.3)；dir3 中心 (36.8,33)
+        val (ox, oy) = when (dir) {
+            0 -> 0f to -10f
+            1 -> 29.2f - 44.5f to 33f - 64f          // 中心 - 未旋转尺寸一半
+            2 -> 25.5f - 44.5f to 35.3f - 64f
+            else -> 36.8f - 44.5f to 33f - 64f
+        }
+        Image(
+            painter = painterResource(psmjRes(code)),
+            contentDescription = null,
+            contentScale = ContentScale.FillBounds,
+            modifier = Modifier
+                .offset(x = ox * u, y = oy * u)
+                .size(fw, fh)
+                .graphicsLayer { rotationZ = rotation }
+        )
+    }
+}
+
+/**
+ * 小牌合成（APK drawSmallMj 1:1）：白胚 0.8 + 面 0.4584 缩放旋转（他家手牌/副露）。
+ * 占位：dir0/2 = 40.8x60.8u，dir1/3 = 51.2x51.2u。
+ */
+@Composable
+internal fun MjSmallTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifier) {
+    val uprightW = u * 51f * 0.8f       // 40.8u
+    val uprightH = u * 76f * 0.8f       // 60.8u
+    val lieW = u * 64f * 0.8f           // 51.2u
+    val boxW = if (dir == 1 || dir == 3) lieW else uprightW
+    val boxH = if (dir == 1 || dir == 3) lieW else uprightH
+    val fw = u * 89f * 0.4584f          // 40.8u
+    val fh = u * 128f * 0.4584f         // 58.7u
+    val bodyRes = when (dir) {
+        1 -> R.drawable.tablemjwh0
+        2 -> R.drawable.tablemjnh0
+        3 -> R.drawable.tablemjeh0
+        else -> R.drawable.tablemjh0
+    }
+    val rotation = when (dir) { 1 -> 270f; 2 -> 180f; 3 -> 90f; else -> 0f }
+    Box(modifier.size(boxW, boxH)) {
+        Image(
+            painter = painterResource(bodyRes),
+            contentDescription = null,
+            contentScale = ContentScale.FillBounds,
+            modifier = Modifier.size(boxW, boxH)
+        )
+        // APK 偏移常量：dir0 面左上 (0,-4)；dir1 中心 (23.84,26.1)；dir2 中心 (21.6,30.66)；dir3 中心 (29.16,25.9)
+        val (ox, oy) = when (dir) {
+            0 -> 0f to -4f
+            1 -> 23.84f - 44.5f to 26.1f - 64f
+            2 -> 21.6f - 44.5f to 30.66f - 64f
+            else -> 29.16f - 44.5f to 25.9f - 64f
+        }
+        Image(
+            painter = painterResource(psmjRes(code)),
+            contentDescription = null,
+            contentScale = ContentScale.FillBounds,
+            modifier = Modifier
+                .offset(x = ox * u, y = oy * u)
+                .size(fw, fh)
+                .graphicsLayer { rotationZ = rotation }
+        )
+    }
+}
+
+/** 他家手牌背面：右家 cemian2 / 上家 cemian3 / 左家 cemian4（APK w[1]/w[2]/w[3]） */
+@Composable
+internal fun MjBackTile(seatPos: Int, u: Dp, modifier: Modifier = Modifier) {
+    val (res, w, h) = when (seatPos) {
+        1 -> Triple(R.drawable.mjback_e, 24f, 58f)
+        2 -> Triple(R.drawable.mjback_n, 32f, 46f)
+        else -> Triple(R.drawable.mjback_w, 24f, 58f)
+    }
+    Image(
+        painter = painterResource(res),
+        contentDescription = "手牌背面",
+        contentScale = ContentScale.FillBounds,
+        modifier = modifier.size(u * w, u * h)
+    )
+}
+
+/** 明杠压杆（APK v[0]=cc2 盖在暗杠上）/ 暗杠背杆 */
+@Composable
+internal fun MjGangCover(u: Dp, modifier: Modifier = Modifier) {
+    Image(
+        painter = painterResource(R.drawable.mjcc2),
+        contentDescription = null,
+        contentScale = ContentScale.FillBounds,
+        modifier = modifier.size(u * 48f, u * 72f)
+    )
+}
+
+/** 发牌盖牌（APK aa=gaipai 89x123 绿背） */
+@Composable
+internal fun MjDealCover(u: Dp, modifier: Modifier = Modifier) {
+    Image(
+        painter = painterResource(R.drawable.mjdeal_cover),
+        contentDescription = null,
+        contentScale = ContentScale.FillBounds,
+        modifier = modifier.size(u * 89f, u * 123f)
+    )
 }
