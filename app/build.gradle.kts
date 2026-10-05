@@ -13,8 +13,8 @@ android {
         applicationId = "com.laoxiang.ddz"
         minSdk = 21
         targetSdk = 35
-        versionCode = 7
-        versionName = "1.4.3"
+        versionCode = 8
+        versionName = "1.4.4"
         vectorDrawables { useSupportLibrary = true }
     }
 

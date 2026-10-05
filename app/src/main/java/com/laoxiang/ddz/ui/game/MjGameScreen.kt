@@ -111,7 +111,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
 
         // ---- 发牌动画状态：手牌从空 -> 非空 = 新一局开始；先声明供四家手牌/牌背动画共用 ----
         var dealEpoch by remember { mutableIntStateOf(0) }
-        var handWasEmpty by remember { mutableBooleanStateOf(true) }
+        var handWasEmpty by remember { mutableStateOf(true) }
         if (me.hand.isEmpty()) {
             handWasEmpty = true
         } else if (handWasEmpty) {

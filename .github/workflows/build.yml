@@ -22,7 +22,7 @@ on:
       build_type:
         description: '构建类型：debug=调试包 / release=发布包 / all=两者'
         required: true
-        default: 'all'
+        default: 'release'
         type: choice
         options:
           - debug
