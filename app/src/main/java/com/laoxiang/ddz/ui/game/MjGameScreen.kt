@@ -1,6 +1,7 @@
 package com.laoxiang.ddz.ui.game
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -39,24 +40,13 @@ import kotlinx.coroutines.launch
 
 /**
  * 麻将牌局 —— 按参考图排版：
- * 木框青绿呢面桌面；下=我（大牌手牌+右侧副露）、右=下家、上=对家（卧牌背）、左=上家（立牌背）；
- * 左右贴边牌墙立柱、底部牌墙横排；四家牌河用素材卧牌围绕中央罗盘；
+ * 梯形透视木框呢面大桌（bg_mj_table）；下=我（大牌手牌带空格+发牌飞入动画+右侧副露）、
+ * 右=下家、上=对家（卧牌背）、左=上家（立牌背）；
+ * 左右牌河/副露=横躺牌（刻字随牌体旋转，左字头朝左/右字头朝右）；四家牌河围绕中央罗盘；
  * 胡碰杠吃圆形素材按钮、定缺三色圆钮、换三张原版按钮；结算/特效/快捷喊话浮层。
  */
 
-/** 左右家横躺出牌贴图（mj_disc_*r：tablemjwh0 横躺牌体 + 正向刻字，由 gen_disc_rot_v2.py 生成） */
-private val DISC_ROT = intArrayOf(
-    R.drawable.mj_disc_0r, R.drawable.mj_disc_1r, R.drawable.mj_disc_2r, R.drawable.mj_disc_3r,
-    R.drawable.mj_disc_4r, R.drawable.mj_disc_5r, R.drawable.mj_disc_6r, R.drawable.mj_disc_7r,
-    R.drawable.mj_disc_8r, R.drawable.mj_disc_9r, R.drawable.mj_disc_10r, R.drawable.mj_disc_11r,
-    R.drawable.mj_disc_12r, R.drawable.mj_disc_13r, R.drawable.mj_disc_14r, R.drawable.mj_disc_15r,
-    R.drawable.mj_disc_16r, R.drawable.mj_disc_17r, R.drawable.mj_disc_18r, R.drawable.mj_disc_19r,
-    R.drawable.mj_disc_20r, R.drawable.mj_disc_21r, R.drawable.mj_disc_22r, R.drawable.mj_disc_23r,
-    R.drawable.mj_disc_24r, R.drawable.mj_disc_25r, R.drawable.mj_disc_26r, R.drawable.mj_disc_27r,
-    R.drawable.mj_disc_28r, R.drawable.mj_disc_29r, R.drawable.mj_disc_30r, R.drawable.mj_disc_31r,
-    R.drawable.mj_disc_32r, R.drawable.mj_disc_33r
-)
-
+/** 金色数字素材 */
 private val NUM_RES = intArrayOf(
     R.drawable.mj_num0, R.drawable.mj_num1, R.drawable.mj_num2, R.drawable.mj_num3,
     R.drawable.mj_num4, R.drawable.mj_num5, R.drawable.mj_num6, R.drawable.mj_num7,
@@ -88,13 +78,14 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         val W = maxWidth
         val H = maxHeight
         val frame = W * 0.0285f                     // 木框厚度
-        val handW = ((W - 200.dp) / 14.6f).coerceAtMost(H * 0.098f)
+        val handW = ((W - 200.dp) / 15.2f).coerceAtMost(H * 0.098f)
         val handH = handW * 1.382f
         val meldW = handW * 0.78f
-        val discW = handW * 0.60f
+        val discW = handW * 0.62f                   // 近处卧牌（自家牌河/左右家）
+        val discTop = handW * 0.54f                 // 远处卧牌（对家，透视更小）
         val backW = handW * 0.44f
         val backH = backW * 1.5f
-        val backLieW = handW * 0.72f
+        val backLieW = handW * 0.66f
         val wallW = handW * 0.42f
         val wallH = wallW * 122f / 82f
         val plateSz = H * 0.245f
@@ -117,6 +108,23 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         val top = seats[(mySeat + 2) % n]
         val left = seats[(mySeat + 3) % n]
         val selected by vm.selected.collectAsState()
+
+        // ---- 发牌动画状态：手牌从空 -> 非空 = 新一局开始；先声明供四家手牌/牌背动画共用 ----
+        var dealEpoch by remember { mutableIntStateOf(0) }
+        var handWasEmpty by remember { mutableBooleanStateOf(true) }
+        if (me.hand.isEmpty()) {
+            handWasEmpty = true
+        } else if (handWasEmpty) {
+            handWasEmpty = false
+            dealEpoch++
+        }
+        val deal = remember { Animatable(1f) }
+        LaunchedEffect(dealEpoch) {
+            if (dealEpoch > 0) {
+                deal.snapTo(0f)
+                deal.animateTo(1f, tween(840, easing = LinearEasing))
+            }
+        }
 
         var toast by remember { mutableStateOf<Pair<Long, String>?>(null) }
         var showChat by remember { mutableStateOf(false) }
@@ -228,7 +236,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             repeat(12) { MjWallTile(wallW, vertical = false) }
         }
 
-        // ================= 对家：卧牌背横排 =================
+        // ================= 对家：卧牌背横排（发牌时依次亮起） =================
         val backsTop = frame + 8.dp + backLieW * 0.5f
         Row(
             Modifier
@@ -236,7 +244,16 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 .offset(y = backsTop - backLieW * 0.5f),
             horizontalArrangement = Arrangement.spacedBy(-backLieW * 0.30f)
         ) {
-            repeat(top.handCount.coerceIn(1, 14)) { MjBackLie(backLieW) }
+            repeat(top.handCount.coerceIn(1, 14)) { idx ->
+                Box(
+                    Modifier.graphicsLayer {
+                        val x = ((deal.value * 840f - idx * 40f) / 280f).coerceIn(0f, 1f)
+                        alpha = 0.25f + 0.75f * x
+                        val s = 0.7f + 0.3f * x
+                        scaleX = s; scaleY = s
+                    }
+                ) { MjBackLie(backLieW) }
+            }
         }
         // 对家副露（顶部右侧）
         if (top.melds.isNotEmpty()) {
@@ -248,7 +265,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                top.melds.forEach { m -> m.tiles.forEach { t -> MjDiscTile(t.code, discW * 0.94f) } }
+                top.melds.forEach { m -> m.tiles.forEach { t -> MjDiscTile(t.code, discTop * 1.06f) } }
             }
         }
         // 对家牌河（牌背下方，最新一排靠中央）
@@ -256,12 +273,12 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         Column(
             Modifier
                 .align(Alignment.TopCenter)
-                .offset(y = backsTop + backLieW * 0.40f + discW * 0.52f + 4.dp),
+                .offset(y = backsTop + backLieW * 0.40f + discTop * 0.52f + 4.dp),
             verticalArrangement = Arrangement.spacedBy(3.dp)
         ) {
             topRiverRows.forEach { row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                    row.forEach { t -> MjDiscTile(t.code, discW) }
+                    row.forEach { t -> MjDiscTile(t.code, discTop) }
                 }
             }
         }
@@ -281,41 +298,54 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(-backH * 0.56f),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                repeat(backs) { MjBackStand(backW) }
+                repeat(backs) { idx ->
+                    Box(
+                        Modifier.graphicsLayer {
+                            val x = ((deal.value * 840f - idx * 40f) / 280f).coerceIn(0f, 1f)
+                            alpha = 0.25f + 0.75f * x
+                            val s = 0.7f + 0.3f * x
+                            scaleX = s; scaleY = s
+                        }
+                    ) { MjBackStand(backW) }
+                }
             }
-            // 副露：立背列下方竖排卧牌（超过 6 张分双列，防溢出屏幕）
+            // 副露：立背列下方竖排横躺牌（刻字随牌体旋转，参考图样式；超过 6 张分双列防溢出）
             val backsEnd = colTop + backH * 0.44f * (backs - 1) + backH * 0.5f
             if (seat.melds.isNotEmpty()) {
                 Row(
                     Modifier
                         .align(if (isRight) Alignment.TopEnd else Alignment.TopStart)
                         .offset(
-                            x = (edgeX - discW * 0.35f) * (if (isRight) -1 else 1),
+                            x = (frame + wallW * 1.53f + discW * 0.61f) * (if (isRight) -1 else 1),
                             y = backsEnd + 10.dp
                         ),
                     horizontalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     seat.melds.flatMap { it.tiles }.chunked(6).forEach { col ->
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            col.forEach { t -> MjDiscTile(t.code, discW * 0.88f, rotated = true) }
+                            col.forEach { t ->
+                                MjDiscTile(t.code, discW * 0.88f, dir = if (isRight) 1 else -1)
+                            }
                         }
                     }
                 }
             }
-            // 牌河：竖排（旋转卧牌），靠内一列
+            // 牌河：竖排横躺牌（刻字随牌体旋转），靠内一列
             val riverCols = seat.river.chunked(4).takeLast(2)
             Row(
                 Modifier
                     .align(Alignment.CenterStart)
                     .offset(
-                        x = (frame + wallW * 1.53f + discW * 0.5f) * (if (isRight) -1 else 1),
+                        x = (frame + wallW * 1.53f + discW * 0.69f) * (if (isRight) -1 else 1),
                         y = H * 0.03f
                     ),
                 horizontalArrangement = Arrangement.spacedBy(3.dp)
             ) {
                 riverCols.forEach { col ->
                     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        col.forEach { t -> MjDiscTile(t.code, discW, rotated = true) }
+                        col.forEach { t ->
+                            MjDiscTile(t.code, discW, dir = if (isRight) 1 else -1)
+                        }
                     }
                 }
             }
@@ -395,6 +425,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
 
         // ================= 手牌 + 副露 =================
         val hand = me.hand.sortedBy { it.code }
+
         Box(
             Modifier
                 .align(Alignment.BottomCenter)
@@ -404,31 +435,48 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             contentAlignment = Alignment.BottomCenter
         ) {
         Row(verticalAlignment = Alignment.Bottom) {
-            Row(horizontalArrangement = Arrangement.spacedBy(handW * 0.035f)) {
-                hand.forEach { t ->
+            Row(horizontalArrangement = Arrangement.spacedBy(handW * 0.10f)) {
+                hand.forEachIndexed { i, t ->
+                    val n = hand.size
                     MjTileView(
                         tile = t,
                         w = handW,
                         selected = t.id in selected,
                         laiziMark = snap.laiziCode == t.code,
-                        modifier = Modifier.clickable {
-                            if (t.id in selected) {
-                                val err = vm.discardSelected()
-                                if (err != null) toast = System.nanoTime() to err
-                            } else vm.toggleSelect(t.id)
-                        }
+                        modifier = Modifier
+                            .graphicsLayer {
+                                val p = deal.value
+                                val e = if (p >= 1f) 1f else {
+                                    val x = ((p * 840f - i * 45f) / 300f).coerceIn(0f, 1f)
+                                    1f - (1f - x) * (1f - x) * (1f - x)
+                                }
+                                if (e < 1f) {
+                                    translationX =
+                                        -(i - (n - 1) / 2f) * (handW * 1.10f).toPx() * (1f - e)
+                                    translationY = -(H.toPx() * 0.30f) * (1f - e)
+                                    alpha = 0.25f + 0.75f * e
+                                } else {
+                                    translationX = 0f; translationY = 0f; alpha = 1f
+                                }
+                            }
+                            .clickable {
+                                if (t.id in selected) {
+                                    val err = vm.discardSelected()
+                                    if (err != null) toast = System.nanoTime() to err
+                                } else vm.toggleSelect(t.id)
+                            }
                     )
                 }
             }
             if (me.melds.isNotEmpty()) {
-                Spacer(Modifier.width(handW * 0.14f))
+                Spacer(Modifier.width(handW * 0.20f))
                 Row(
                     verticalAlignment = Alignment.Bottom,
                     horizontalArrangement = Arrangement.spacedBy(meldW * 0.10f)
                 ) {
                     me.melds.forEach { m ->
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(handW * 0.035f),
+                            horizontalArrangement = Arrangement.spacedBy(handW * 0.10f),
                             modifier = Modifier.offset(y = -handH * 0.085f)
                         ) {
                             m.tiles.forEach { t -> MjDiscTile(t.code, meldW) }
@@ -726,26 +774,31 @@ internal fun mjGoldBrush(): Brush =
 // ================================================================ 素材小部件
 
 /**
- * 出牌：rotated=false 立牌样式（对家/自家牌河、副露，与手牌同贴图，参考图均为正向立牌）；
- * rotated=true 横躺牌体 + 正向刻字（左右家，参考图刻字不随牌体旋转）
+ * 出牌贴图：dir=0 立牌正向（对家/自家牌河、副露）。
+ * dir=±1 横躺牌 —— 立牌贴图整体旋转 90°（刻字随牌体一起转，参考图样式）：
+ * 左家 dir=-1（字头朝左）/ 右家 dir=+1（字头朝右）。
  */
 @Composable
-internal fun MjDiscTile(code: Int, w: Dp, rotated: Boolean = false) {
-    if (rotated) {
-        Image(
-            painter = painterResource(DISC_ROT[code.coerceIn(0, 33)]),
-            contentDescription = null,
-            contentScale = ContentScale.FillBounds,
-            modifier = Modifier.size(w, w)
-        )
-    } else {
-        val h = w * 1.38202f
+internal fun MjDiscTile(code: Int, w: Dp, dir: Int = 0) {
+    val h = w * 1.38202f
+    if (dir == 0) {
         Image(
             painter = painterResource(faceRes(code.coerceIn(0, 33))),
             contentDescription = null,
             contentScale = ContentScale.FillBounds,
             modifier = Modifier.size(w, h)
         )
+    } else {
+        Box(modifier = Modifier.size(h, w), contentAlignment = Alignment.Center) {
+            Image(
+                painter = painterResource(faceRes(code.coerceIn(0, 33))),
+                contentDescription = null,
+                contentScale = ContentScale.FillBounds,
+                modifier = Modifier
+                    .size(w, h)
+                    .graphicsLayer { rotationZ = 90f * dir }
+            )
+        }
     }
 }
 
