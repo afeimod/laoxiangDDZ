@@ -184,7 +184,7 @@ internal fun MjTableTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifi
             contentDescription = null,
             contentScale = ContentScale.FillBounds,
             modifier = Modifier
-                .offset(x = ox * u, y = oy * u)
+                .offset(x = u * ox, y = u * oy)
                 .size(fw, fh)
                 .graphicsLayer { rotationZ = rotation }
         )
@@ -230,7 +230,7 @@ internal fun MjSmallTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifi
             contentDescription = null,
             contentScale = ContentScale.FillBounds,
             modifier = Modifier
-                .offset(x = ox * u, y = oy * u)
+                .offset(x = u * ox, y = u * oy)
                 .size(fw, fh)
                 .graphicsLayer { rotationZ = rotation }
         )
