@@ -60,6 +60,13 @@ private val NUM_RES = intArrayOf(
     R.drawable.mj_num8, R.drawable.mj_num9
 )
 
+/** 横躺牌河蛇形列位：列宽 9/7/5/3/1 递减，返回 (列号, 列内序号)（与 APK 折行逻辑一致） */
+private fun lieRiverCell(i: Int): Pair<Int, Int> {
+    var col = 0; var start = 0; var acc = 9; var sz = 9
+    while (i >= acc) { col++; start = acc; sz -= 2; acc += if (sz > 0) sz else 1 }
+    return col to (i - start)
+}
+
 @Composable
 fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
     val snapshot by vm.snapshot.collectAsState()
@@ -78,7 +85,8 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         )
 
         // 项目专属背景刻字水印（与其它玩法一致：老乡大众麻将/老乡红中癞子/老乡四川血战）
-        snapshot?.let { TableEngraving("老乡" + it.mode.label) }
+        // 必须传 fillMaxSize 让内层 Box 撑满全屏并居中，否则会缩成内容大小贴在左上角
+        snapshot?.let { TableEngraving("老乡" + it.mode.label, Modifier.fillMaxSize()) }
 
         val W = maxWidth
         val H = maxHeight
@@ -217,21 +225,13 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         val left = seats[(mySeat + 3) % 4]
         val selected by vm.selected.collectAsState()
 
-        // ---- 发牌动画状态：手牌空 -> 非空 = 新一局开始 ----
-        var dealEpoch by remember { mutableStateOf(0) }
-        var handWasEmpty by remember { mutableStateOf(true) }
-        if (me.hand.isEmpty()) {
-            handWasEmpty = true
-        } else if (handWasEmpty) {
-            handWasEmpty = false
-            dealEpoch++
-        }
-        val deal = remember { Animatable(1f) }
-        LaunchedEffect(dealEpoch) {
-            if (dealEpoch > 0) {
-                deal.snapTo(0f)
-                deal.animateTo(1f, tween(840, easing = LinearEasing))
-            }
+        // ---- 发牌动画：以局号为键每局必重启（round 每次 newMatch 递增，比空→非空检测更可靠） ----
+        // 节奏：总时长 1200ms；我方手牌逐张从中央飞入（每张延迟 40ms、飞行 320ms），
+        // 随后逐张盖牌(mjdeal_cover)翻面（520ms 起每张延迟 30ms、翻面 200ms）；他家牌背依次亮起
+        val deal = remember { Animatable(0f) }
+        LaunchedEffect(snap.round) {
+            deal.snapTo(0f)
+            deal.animateTo(1f, tween(1200, easing = LinearEasing))
         }
 
         var toast by remember { mutableStateOf<Pair<Long, String>?>(null) }
@@ -409,23 +409,22 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         }
         // 左家牌河：竖列横躺牌（APK：步距40向下，列宽 9/7/5/3/1 递减，列距64右移）
         left.river.forEachIndexed { i, t ->
-            var col = 0; var start = 0; var acc = 9; var sz = 9
-            while (i >= acc) { col++; start = acc; sz -= 2; acc += if (sz > 0) sz else 1 }
-            val r = i - start
+            val (col, r) = lieRiverCell(i)
             Place(
                 fx(133f) + g(64f) * col,
                 fy(110f) + g(40f) * (col + r)
             ) { MjTableTile(t.code, 3, u) }
         }
         // 右家牌河：竖列横躺牌（步距40向上，列宽 9/7/5/3/1，列距64左移）
-        right.river.forEachIndexed { i, t ->
-            var col = 0; var start = 0; var acc = 9; var sz = 9
-            while (i >= acc) { col++; start = acc; sz -= 2; acc += if (sz > 0) sz else 1 }
-            val r = i - start
+        // ⚠ APK DrawFlatGived 对右家是【倒序绘制】（从最后一张往前画）：
+        // 旧牌(下方)盖住新牌(上方)的下缘绿边，每张的刻字区域都不被遮挡；正序画则新牌盖住旧牌刻字
+        val rRiverCount = right.river.size
+        for (ri in rRiverCount - 1 downTo 0) {
+            val (rc, rr) = lieRiverCell(ri)
             Place(
-                fx(628f) - g(64f) * col,
-                fy(315f) - g(40f) * (col + r)
-            ) { MjTableTile(t.code, 1, u) }
+                fx(628f) - g(64f) * rc,
+                fy(315f) - g(40f) * (rc + rr)
+            ) { MjTableTile(right.river[ri].code, 1, u) }
         }
 
         // ================= 他家手牌背面（DrawFlatPE/PN/PW 隐藏态 1:1） =================
@@ -434,7 +433,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             Place(fx(702f), fy(80f) + g(22f) * idx) {
                 Box(
                     Modifier.graphicsLayer {
-                        val p = ((deal.value * 840f - idx * 40f) / 280f).coerceIn(0f, 1f)
+                        val p = ((deal.value * 1200f - idx * 40f) / 280f).coerceIn(0f, 1f)
                         alpha = 0.25f + 0.75f * p
                         val s = 0.7f + 0.3f * p
                         scaleX = s; scaleY = s
@@ -447,7 +446,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             Place(fx(200f) + g(32f) * idx, fy(78f)) {
                 Box(
                     Modifier.graphicsLayer {
-                        val p = ((deal.value * 840f - idx * 40f) / 280f).coerceIn(0f, 1f)
+                        val p = ((deal.value * 1200f - idx * 40f) / 280f).coerceIn(0f, 1f)
                         alpha = 0.25f + 0.75f * p
                         val s = 0.7f + 0.3f * p
                         scaleX = s; scaleY = s
@@ -566,7 +565,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 Place(fx(86f), handTop + g(22f) * idx) {
                     Box(
                         Modifier.graphicsLayer {
-                            val p = ((deal.value * 840f - idx * 40f) / 280f).coerceIn(0f, 1f)
+                            val p = ((deal.value * 1200f - idx * 40f) / 280f).coerceIn(0f, 1f)
                             alpha = 0.25f + 0.75f * p
                             val s = 0.7f + 0.3f * p
                             scaleX = s; scaleY = s
@@ -577,15 +576,19 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         }
 
         // ================= 我方手牌（DrawFlatPS 1:1：大牌紧贴右对齐 + 摸牌隔34 + 选中上浮25） =================
+        // 摸到的牌（引擎 lastDrawnId）不参与排序，固定放在第 14 墩（隔 34）单独展示，
+        // 打出/宣告后归位重排；吃碰后无摸牌则整手紧排
         val hand = me.hand
-        val group = minOf(hand.size, 13)
+        val drawnId = snap.drawnTileId
+        val normalHand = hand.filter { it.id != drawnId }
+        val drawnTile = hand.firstOrNull { it.id == drawnId }
         val bigW = g(89f)
         val bigH = g(128f)
-        val xStart = (W - bigW * 14 - g(34f)) / 2 + bigW * (13 - group)
+        val xStart = (W - bigW * 14 - g(34f)) / 2 + bigW * (13 - normalHand.size)
         val yHand = H - bigH
-        hand.forEachIndexed { i, t ->
-            val isDrawn = i >= 13
-            val x = if (isDrawn) xStart + bigW * 13 + g(34f) else xStart + bigW * i
+
+        @Composable
+        fun HandTile(idx: Int, x: Dp, t: MjTile) {
             val raised = t.id in selected
             Place(x, if (raised) yHand - fy(25f) else yHand) {
                 MjBigTile(
@@ -595,15 +598,18 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                         .graphicsLayer {
                             val p = deal.value
                             val e = if (p >= 1f) 1f else {
-                                val xx = ((p * 840f - i * 45f) / 300f).coerceIn(0f, 1f)
+                                val xx = ((p * 1200f - idx * 40f) / 320f).coerceIn(0f, 1f)
                                 1f - (1f - xx) * (1f - xx) * (1f - xx)
                             }
                             if (e < 1f) {
-                                translationX = -(i - (hand.size - 1) / 2f) * bigW.toPx() * (1f - e)
+                                translationX = -(idx - 6.5f) * bigW.toPx() * (1f - e)
                                 translationY = -(H.toPx() * 0.30f) * (1f - e)
-                                alpha = 0.25f + 0.75f * e
+                                val s = 0.5f + 0.5f * e
+                                scaleX = s; scaleY = s
+                                alpha = e
                             } else {
-                                translationX = 0f; translationY = 0f; alpha = 1f
+                                translationX = 0f; translationY = 0f
+                                scaleX = 1f; scaleY = 1f; alpha = 1f
                             }
                         }
                         .clickable {
@@ -611,10 +617,28 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                                 val err = vm.discardSelected()
                                 if (err != null) toast = System.nanoTime() to err
                             } else vm.toggleSelect(t.id)
-                        }
+                        },
+                    // 发牌盖牌：飞入到位后逐张翻开（绿背淡出上飘，APK gaipai 样式）
+                    content = {
+                        Image(
+                            painter = painterResource(R.drawable.mjdeal_cover),
+                            contentDescription = null,
+                            contentScale = ContentScale.FillBounds,
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .size(u * 89f, u * 123f)
+                                .graphicsLayer {
+                                    val fp = ((deal.value * 1200f - (520f + idx * 30f)) / 200f).coerceIn(0f, 1f)
+                                    alpha = 1f - fp
+                                    translationY = -u.toPx() * 14f * fp
+                                }
+                        )
+                    }
                 )
             }
         }
+        normalHand.forEachIndexed { i, t -> HandTile(i, xStart + bigW * i, t) }
+        drawnTile?.let { t -> HandTile(13, xStart + bigW * 13 + g(34f), t) }
 
         // ================= 中央提示 =================
         val myTurn = snap.phase == MjPhase.PLAYING && snap.turn == mySeat

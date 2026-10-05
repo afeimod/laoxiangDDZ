@@ -115,6 +115,8 @@ data class MjSnapshot(
     val gangDelta: Map<Int, Int> = emptyMap(),
     /** 视角玩家当前可自摸胡 */
     val myHu: Boolean = false,
+    /** 视角玩家刚摸到的牌 id（待出牌时在第14墩单独展示；无摸牌/非待出牌为 -1） */
+    val drawnTileId: Int = -1,
     /** 视角玩家可暗杠的 code */
     val anGangCodes: List<Int> = emptyList(),
     /** 视角玩家可补杠的牌 id */
@@ -160,6 +162,10 @@ class MjEngine(private val randomSeed: Long? = null) {
     var turn = -1
         private set
     var awaitingDiscard = false
+        private set
+
+    /** 当前回合玩家刚摸到的牌 id（未出牌时有效；吃碰后/出牌后为 -1）—— 用于手牌第14墩单独展示 */
+    var lastDrawnId: Int = -1
         private set
 
     val wallCount: Int get() = wall.size
@@ -234,13 +240,14 @@ class MjEngine(private val randomSeed: Long? = null) {
         totalDiscards = 0
         lastDrawGang = false
         lastDrawSea = false
+        lastDrawnId = -1
 
         val deck = MjTile.fullDeck(mode.withZi).shuffled(rng)
         dealer = rng.nextInt(4)
         hands.forEach { it.clear() }
         for (s in 0 until 4) {
             hands[s] += deck.subList(s * 13, s * 13 + 13)
-            hands[s].sortBy { it.code }
+            hands[s].sortBy { it.code }   // 内部初始序；对外展示走 myHand 确定性排序
         }
         wall.clear()
         wall.addAll(deck.subList(52, deck.size))
@@ -262,7 +269,8 @@ class MjEngine(private val randomSeed: Long? = null) {
 
     private var hands = Array(4) { ArrayList<MjTile>() }
 
-    fun myHand(s: Int): List<MjTile> = hands[s].sortedBy { it.code }
+    fun myHand(s: Int): List<MjTile> =
+        hands[s].sortedWith(compareBy({ it.code }, { it.id }))   // 确定性排序：同 code 不跳动
 
     fun handCount(s: Int): Int = hands[s].size
 
@@ -318,7 +326,7 @@ class MjEngine(private val randomSeed: Long? = null) {
             given[s].forEach { t -> hands[s].removeAll { it.id == t.id } }
             hands[to] += given[s]
         }
-        hands.forEach { it.sortBy { t -> t.code } }
+        hands.forEach { it.sortWith(compareBy({ t: MjTile -> t.code }, { t: MjTile -> t.id })) }
         swapPick.forEach { it.clear() }
         events += MjEvent.SwapDone(swapDir)
         phase = MjPhase.PLAYING
@@ -334,6 +342,7 @@ class MjEngine(private val randomSeed: Long? = null) {
         lastDrawSea = false
         val t = wall.removeFirst()
         hands[s] += t
+        lastDrawnId = t.id
         drawCount[s]++
         turn = s
         awaitingDiscard = true
@@ -345,11 +354,13 @@ class MjEngine(private val randomSeed: Long? = null) {
         if (phase != MjPhase.PLAYING) return
         if (wall.isEmpty()) {
             // 杠后无牌可摸：直接进入弃牌
+            lastDrawnId = -1
             turn = s; awaitingDiscard = true
             return
         }
         val t = wall.removeLast()
         hands[s] += t
+        lastDrawnId = t.id
         drawCount[s]++
         turn = s
         awaitingDiscard = true
@@ -425,6 +436,7 @@ class MjEngine(private val randomSeed: Long? = null) {
         rivers[s] += t
         totalDiscards++
         awaitingDiscard = false
+        lastDrawnId = -1
         events += MjEvent.Discard(s, t)
         openClaimWindow(t, s, robGang = false)
         return true
@@ -547,6 +559,7 @@ class MjEngine(private val randomSeed: Long? = null) {
                     used.forEach { u -> hands[seat].removeAll { it.id == u.id } }
                     meldsOf[seat] += MjMeld(MjMeldType.PENG, used + tile, from)
                     events += MjEvent.Peng(seat)
+                    lastDrawnId = -1
                     turn = seat; awaitingDiscard = true
                 }
                 "GANG" -> {
@@ -567,6 +580,7 @@ class MjEngine(private val randomSeed: Long? = null) {
                     seq.forEach { u -> hands[seat].removeAll { it.id == u.id } }
                     meldsOf[seat] += MjMeld(MjMeldType.CHI, seq + tile, from)
                     events += MjEvent.Chi(seat)
+                    lastDrawnId = -1
                     turn = seat; awaitingDiscard = true
                 }
             }
@@ -676,7 +690,7 @@ class MjEngine(private val randomSeed: Long? = null) {
         pendingBu = null
         // 抢杠成立：杠牌退还补杠者手牌（作为和牌张随胡结算，不入副露）
         hands[bu.seat] += bu.tile
-        hands[bu.seat].sortBy { it.code }
+        hands[bu.seat].sortWith(compareBy({ t: MjTile -> t.code }, { t: MjTile -> t.id }))
     }
 
     /** 刮风下雨：明杠（点杠者 1 倍）/ 补杠（三家各 1）/ 暗杠（三家各 2） */
@@ -881,6 +895,7 @@ class MjEngine(private val randomSeed: Long? = null) {
             swapPicked = phase == MjPhase.SWAP3 && swapPick[s].size == 3,
             gangDelta = gangDelta.toMap(),
             myHu = myTurnToAct && canSelfHu(s),
+            drawnTileId = if (phase == MjPhase.PLAYING && turn == s && awaitingDiscard) lastDrawnId else -1,
             anGangCodes = if (myTurnToAct) anGangOptions(s) else emptyList(),
             buGangIds = if (myTurnToAct) buGangOptions(s).map { it.id } else emptyList(),
             result = result

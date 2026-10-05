@@ -326,7 +326,15 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
 
     fun toggleSelect(tileId: Int) {
         val cur = selected.value
-        selected.value = if (tileId in cur) cur - tileId else cur + tileId
+        selected.value = when {
+            // 再点已抬起的牌 = 取消选中（UI 层同时会把"点中已选牌"解释为出牌）
+            tileId in cur -> cur - tileId
+            // 换三张阶段：最多选 3 张（同花色校验在提交时做）
+            snapshot.value?.phase == MjPhase.SWAP3 ->
+                if (cur.size < 3) cur + tileId else cur
+            // 出牌阶段：单选——点其他牌时前一张自动回落，不会全部悬起
+            else -> setOf(tileId)
+        }
         sound.play("select", 0.6f)
     }
 

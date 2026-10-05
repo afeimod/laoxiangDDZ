@@ -171,15 +171,14 @@ internal fun MjTableTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifi
             contentScale = ContentScale.FillBounds,
             modifier = Modifier.size(boxW, boxH)
         )
-        // APK DrawCCMj 偏移常量（1280 设计空间，面 51.0x73.34u）:
-        // dir0 面左上 (0,-10)；dir1 面中心 (29.17,33)；dir2 面中心 (25.5,35.33)；dir3 面中心 (36.83,33)
-        // APK drawByScale 旋转锚点 = (x+原图宽/2, y+原图高/2)，换算成 Compose 绕自身中心旋转:
-        // 未旋转图左上 = 最终中心 - (半宽25.5, 半高36.67)
+        // 刻字居中对位（白面对齐法）：psmj 面图画布内容偏下（中值内容中心 43.8,70.8），
+        // 若按 APK 字节码的画布中心定位（dir1=29.17,33）会因画布不对称留白使刻字明显偏离白面。
+        // 改为令面图内容中心旋转后落在牌体白面中心（实测白心：立牌(25,32) 横躺(31.5,32)）：
         val (ox, oy) = when (dir) {
-            0 -> 0f to -10f
-            1 -> 29.17f - 25.5f to 33f - 36.67f       // (3.67, -3.67)
-            2 -> 25.5f - 25.5f to 35.33f - 36.67f     // (0, -1.34)
-            else -> 36.83f - 25.5f to 33f - 36.67f    // (11.33, -3.67)
+            0 -> -0.07f to -8.54f      // 立牌（下）
+            1 -> 2.13f to -5.10f       // 横躺（右）rot270
+            2 -> -0.93f to -0.80f      // 立牌（上）rot180
+            else -> 9.87f to -4.24f    // 横躺（左）rot90
         }
         Image(
             painter = painterResource(psmjRes(code)),
@@ -195,12 +194,7 @@ internal fun MjTableTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifi
 
 /**
  * 小牌合成（APK drawSmallMj 1:1）：白胚 0.8 + 面 0.4584 缩放旋转（他家副露）。
- * 字节码实测（与 DrawCCMj 同构 case0→体x … case3→体y）：
- * dir0 体=tablemjh0(51x76)*0.8 立牌 + 面 rot0 左上(0,-4)；
- * dir1 体=tablemjwh0(64x64)*0.8 横躺 + 面 rot270 中心(23.84,26.1)；
- * dir2 体=tablemjnh0(51x76)*0.8 立牌 + 面 rot180 中心(21.6,30.66)；
- * dir3 体=tablemjeh0(64x64)*0.8 横躺 + 面 rot90 中心(29.16,25.9)。
- * Compose 绕自身中心旋转 → 未旋转左上 = 中心 - (面缩放半宽20.4, 半高29.34)。
+ * 偏移改用白面对齐法（同 MjTableTile）：面内容中心落牌体白面中心（小牌白心 ×0.8）。
  */
 @Composable
 internal fun MjSmallTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifier) {
@@ -216,10 +210,10 @@ internal fun MjSmallTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifi
     val fh = u * 128f * 0.4584f         // 58.68u
     val rotation = when (dir) { 1 -> 270f; 2 -> 180f; 3 -> 90f; else -> 0f }
     val (ox, oy) = when (dir) {
-        1 -> 23.84f - 20.4f to 26.1f - 29.34f      // (3.44, -3.24)
-        2 -> 21.6f - 20.4f to 30.66f - 29.34f      // (1.2, 1.32)
-        3 -> 29.16f - 20.4f to 25.9f - 29.34f      // (8.76, -3.44)
-        else -> 0f to -4f
+        1 -> 1.68f to -4.06f       // 横躺（右）rot270
+        2 -> -0.72f to -0.62f      // 立牌（上）rot180
+        3 -> 7.92f to -3.42f       // 横躺（左）rot90
+        else -> -0.08f to -6.85f   // 立牌（下）
     }
     Box(modifier.size(boxW, boxH)) {
         Image(
