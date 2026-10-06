@@ -121,6 +121,9 @@ data class MjSnapshot(
     val anGangCodes: List<Int> = emptyList(),
     /** 视角玩家可补杠的牌 id */
     val buGangIds: List<Int> = emptyList(),
+    /** 开局骰子点数（1..6；旧快照/未掷为 -1） */
+    val dice1: Int = -1,
+    val dice2: Int = -1,
     val result: MjResult? = null
 )
 
@@ -147,7 +150,8 @@ sealed class MjEvent {
 
 class MjEngine(private val randomSeed: Long? = null) {
 
-    private val rng = randomSeed?.let { Random(it) } ?: Random.Default
+    // 每局重新播种（时间戳混合，避免任何跨局相关性）；测试固定 seed 时不变
+    private var rng: Random = randomSeed?.let { Random(it) } ?: Random.Default
 
     val players = ArrayList<PlayerState>(4)
     var mode: MjMode = MjMode.DAZHONG
@@ -158,6 +162,12 @@ class MjEngine(private val randomSeed: Long? = null) {
         private set
 
     var dealer = 0
+        private set
+
+    /** 开局骰子点数（1..6；未掷为 -1）——同时用于切墙 */
+    var dice1: Int = -1
+        private set
+    var dice2: Int = -1
         private set
     var turn = -1
         private set
@@ -219,6 +229,9 @@ class MjEngine(private val randomSeed: Long? = null) {
         roundNumber++
         players.clear()
         infos.forEachIndexed { i, info -> players += PlayerState(info.copy(seat = i)) }
+        if (randomSeed == null) {
+            rng = Random(System.nanoTime() xor (roundNumber.toLong() shl 32) xor System.identityHashCode(this).toLong())
+        }
         resetBoard()
     }
 
@@ -251,6 +264,10 @@ class MjEngine(private val randomSeed: Long? = null) {
         }
         wall.clear()
         wall.addAll(deck.subList(52, deck.size))
+        // 掷骰切墙：两颗骰子点数之和决定起抓切割位（仪式与随机性统一，点数同步到 UI 展示）
+        dice1 = rng.nextInt(6) + 1
+        dice2 = rng.nextInt(6) + 1
+        repeat((dice1 + dice2) % wall.size) { wall.addLast(wall.removeFirst()) }
         turn = dealer
         awaitingDiscard = false
         events += MjEvent.Shuffle
@@ -898,6 +915,8 @@ class MjEngine(private val randomSeed: Long? = null) {
             drawnTileId = if (phase == MjPhase.PLAYING && turn == s && awaitingDiscard) lastDrawnId else -1,
             anGangCodes = if (myTurnToAct) anGangOptions(s) else emptyList(),
             buGangIds = if (myTurnToAct) buGangOptions(s).map { it.id } else emptyList(),
+            dice1 = dice1,
+            dice2 = dice2,
             result = result
         )
     }

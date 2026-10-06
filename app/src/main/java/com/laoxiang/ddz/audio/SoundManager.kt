@@ -24,7 +24,10 @@ import com.laoxiang.ddz.R
  *  sfx_win        赢牌
  *  sfx_lose       输牌
  *  sfx_kuaidian   "快点吧我等到花儿都谢了"
- *  bgm_game       对局背景乐（循环）
+ *  bgm_game       对局背景乐（斗地主等牌类，循环）
+ *  bgm_mahjong    麻将对局背景乐（中国风弹拨，循环）
+ *                 "Ishikari Lore" — Kevin MacLeod (incompetech.com)
+ *                 Licensed under Creative Commons: By Attribution 4.0
  *
  *  voice_*        v12 牌型播报/叫抢/快捷喊话语音（62 条，经 VoiceMap 批量注册，
  *                 资源名动态查找，release 压缩需 keep.xml 白名单 @raw/voice_*）
@@ -79,11 +82,11 @@ class SoundManager(private val context: Context) {
 
     // ------------------------------------------------ BGM
 
-    fun startBgm() {
+    fun startBgm(mahjong: Boolean = false) {
         if (!musicEnabled) return
         stopBgm()
         try {
-            bgm = MediaPlayer.create(context, R.raw.bgm_game)?.apply {
+            bgm = MediaPlayer.create(context, if (mahjong) R.raw.bgm_mahjong else R.raw.bgm_game)?.apply {
                 isLooping = true
                 setVolume(0.35f, 0.35f)
                 start()

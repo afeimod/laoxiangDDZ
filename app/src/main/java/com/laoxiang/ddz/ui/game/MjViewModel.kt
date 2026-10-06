@@ -82,7 +82,7 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
         engine.newMatch(infos, m)
         hookSetup()
         publish(effects = true)
-        sound.startBgm()
+        sound.startBgm(mahjong = true)
         pump()
     }
 

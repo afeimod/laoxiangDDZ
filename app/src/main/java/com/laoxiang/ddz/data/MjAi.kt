@@ -183,7 +183,8 @@ class MjAi(
             val cnt = MjRules.countsOf(after.filter { !isLaizi(it) })
             val j2 = after.count { isLaizi(it) }
             val stAfter = bestDiscardShanten(cnt, j2, melds.size + 1)
-            if (stAfter <= curSt) return peng
+            // 碰须严格改善向听（原 ≤ 会让 AI 见牌就碰，牌局呈脚本化观感）
+            if (stAfter < curSt) return peng
         }
         val chiOpts = opts.filter { it.kind == "CHI" }
         if (chiOpts.isNotEmpty()) {
@@ -197,7 +198,7 @@ class MjAi(
                 val stAfter = bestDiscardShanten(cnt, j2, melds.size + 1)
                 if (stAfter < bestSt) { bestSt = stAfter; bestOpt = o }
             }
-            if (bestOpt != null && bestSt <= curSt) return bestOpt
+            if (bestOpt != null && bestSt < curSt) return bestOpt
         }
         return null
     }

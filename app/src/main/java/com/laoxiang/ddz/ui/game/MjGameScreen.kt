@@ -32,6 +32,7 @@ import com.laoxiang.ddz.data.MjClaimOpt
 import com.laoxiang.ddz.data.MjPhase
 import com.laoxiang.ddz.data.MjSeatView
 import com.laoxiang.ddz.data.MjSnapshot
+import com.laoxiang.ddz.data.MjSuit
 import com.laoxiang.ddz.data.MjTile
 import com.laoxiang.ddz.ui.common.AvatarImage
 import com.laoxiang.ddz.ui.theme.Gold
@@ -93,6 +94,18 @@ private fun lieRiverCell(i: Int): Pair<Int, Int> {
     var col = 0; var start = 0; var acc = 9; var sz = 9
     while (i >= acc) { col++; start = acc; sz -= 2; acc += if (sz > 0) sz else 1 }
     return col to (i - start)
+}
+
+/** code(0..33) → 任一副本牌（宣告预览用） */
+private fun codeTile(code: Int): MjTile {
+    val suit = when {
+        code < 9 -> MjSuit.WAN
+        code < 18 -> MjSuit.TONG
+        code < 27 -> MjSuit.TIAO
+        else -> MjSuit.ZI
+    }
+    val num = code % 9 + 1
+    return MjTile(MjTile.idOf(suit, num, 0), suit, num)
 }
 
 @Composable
@@ -261,7 +274,9 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         LaunchedEffect(snap.round) {
             deal.snapTo(0f)
             diceRoll.snapTo(0f)
-            dicePair = intArrayOf(Random.nextInt(1, 7), Random.nextInt(1, 7))
+            // 骰子点数由引擎掷出（同时决定切墙位置，仪式与发牌一致）
+            dicePair = if (snap.dice1 in 1..6 && snap.dice2 in 1..6) intArrayOf(snap.dice1, snap.dice2)
+            else intArrayOf(Random.nextInt(1, 7), Random.nextInt(1, 7))
             diceRoll.animateTo(1f, tween(1000, easing = LinearEasing))
             delay(750)
             deal.animateTo(1f, tween(1200, easing = LinearEasing))
@@ -412,7 +427,138 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             }
         }
 
-        // ================= 四家牌河（DrawFlatGived 1:1） =================
+        // ================= 他家手牌背与副露（APK onDraw 顺序：PE 右 → PN 上 → PW 左） =================
+        // ⚠ APK onDraw: DrawFlatPE>PN>PW>DrawFlatGived(牌河)>DrawFlatPS —— 他家副露先画、牌河后画，
+        //   牌河盖住副露下缘；旧版副露后画导致对家碰吃杠牌面压住牌河（用户反馈），按 APK 顺序重排。
+        // 右家手牌背：cemian2 竖列，x=702，步距 22 重叠
+        repeat(right.handCount.coerceIn(1, 14)) { idx ->
+            Place(fx(702f), fy(80f) + g(22f) * idx) {
+                Box(
+                    Modifier.graphicsLayer {
+                        val p = ((deal.value * 1200f - idx * 40f) / 280f).coerceIn(0f, 1f)
+                        alpha = 0.25f + 0.75f * p
+                        val s = 0.7f + 0.3f * p
+                        scaleX = s; scaleY = s
+                    }
+                ) { MjBackTile(1, u) }
+            }
+        }
+        // 右家副露：手牌列下方竖排（APK PE：起始 y=fy(80)+g(22)*(n-1)+fy(31)；供牌 dir0 步距40，
+        // 立牌 dir1 步距30；暗杠=4张 cc1 背0.9（0/30/60+叠15）；明杠第4张叠在末位上移7）
+        run {
+            var myY = fy(80f) + g(22f) * (right.handCount.coerceIn(1, 14) - 1) + fy(31f)
+            right.melds.forEach { m ->
+                val claimed = if (m.from >= 0) m.tiles.lastIndex else -1
+                if (claimed < 0 && m.tiles.size >= 4) {
+                    Place(fx(702f), myY) { MjMeldBack(false, u) }
+                    Place(fx(702f), myY + g(30f)) { MjMeldBack(false, u) }
+                    Place(fx(702f), myY + g(60f)) { MjMeldBack(false, u) }
+                    Place(fx(702f), myY + g(15f)) { MjMeldBack(false, u) }
+                    myY += g(95f)
+                } else {
+                    var ty = myY
+                    m.tiles.forEachIndexed { ti, t ->
+                        when {
+                            m.tiles.size >= 4 && ti == 3 ->
+                                Place(fx(702f), ty - fy(7f)) { MjSmallTile(t.code, 1, u) }
+                            ti == claimed -> {
+                                if (ti > 0) ty += fy(6f)
+                                Place(fx(702f), ty) { MjSmallTile(t.code, 0, u) }; ty += g(40f)
+                            }
+                            else -> { Place(fx(702f), ty) { MjSmallTile(t.code, 1, u) }; ty += g(30f) }
+                        }
+                    }
+                    myY = ty + fy(5f)
+                }
+            }
+        }
+        // 上家手牌背：cemian3 横排相邻，x=200 起步，步距 32
+        repeat(top.handCount.coerceIn(1, 14)) { idx ->
+            Place(fx(200f) + g(32f) * idx, fy(78f)) {
+                Box(
+                    Modifier.graphicsLayer {
+                        val p = ((deal.value * 1200f - idx * 40f) / 280f).coerceIn(0f, 1f)
+                        alpha = 0.25f + 0.75f * p
+                        val s = 0.7f + 0.3f * p
+                        scaleX = s; scaleY = s
+                    }
+                ) { MjBackTile(2, u) }
+            }
+        }
+        // 上家副露：手牌排右侧横排（APK PN：立牌 dir2 步距51；供牌横躺 dir3 上移11 步距64；
+        // 暗杠=4张 cc2 背（第4张叠第2位上移12）；明杠第4张叠在末位上移12）
+        run {
+            var mx2 = fx(200f) + g(32f) * top.handCount.coerceIn(1, 14) + fx(10f)
+            top.melds.forEach { m ->
+                val claimed = if (m.from >= 0) m.tiles.lastIndex else -1
+                if (claimed < 0 && m.tiles.size >= 4) {
+                    Place(mx2, fy(78f)) { MjMeldBack(true, u) }
+                    Place(mx2 + g(48f), fy(78f)) { MjMeldBack(true, u) }
+                    Place(mx2 + g(96f), fy(78f)) { MjMeldBack(true, u) }
+                    Place(mx2 + g(48f), fy(78f) - g(12f)) { MjMeldBack(true, u) }
+                    mx2 += g(144f) + fx(10f)
+                } else {
+                    var tx = mx2
+                    m.tiles.forEachIndexed { ti, t ->
+                        when {
+                            // 明杠第4张在循环后叠画，不占步距
+                            m.tiles.size >= 4 && ti == 3 -> {}
+                            ti == claimed -> { Place(tx, fy(78f) - g(11f)) { MjTableTile(t.code, 3, u) }; tx += g(64f) }
+                            else -> { Place(tx, fy(78f)) { MjTableTile(t.code, 2, u) }; tx += g(51f) }
+                        }
+                    }
+                    if (m.tiles.size >= 4) {
+                        Place(tx - g(51f), fy(78f) - g(12f)) { MjTableTile(m.tiles[3].code, 2, u) }
+                    }
+                    mx2 = tx + fx(10f)
+                }
+            }
+        }
+        // 左家副露+手牌背（APK PW：副露自 fy(78) 向下，手牌背在副露之下；供牌 dir0 步距40，
+        // 立牌 dir3 步距30；暗杠=4张 cc1 背0.9；明杠第4张叠在末位上移7）
+        run {
+            var myY = fy(78f)
+            left.melds.forEach { m ->
+                val claimed = if (m.from >= 0) m.tiles.lastIndex else -1
+                if (claimed < 0 && m.tiles.size >= 4) {
+                    Place(fx(86f), myY) { MjMeldBack(false, u) }
+                    Place(fx(86f), myY + g(30f)) { MjMeldBack(false, u) }
+                    Place(fx(86f), myY + g(60f)) { MjMeldBack(false, u) }
+                    Place(fx(86f), myY + g(15f)) { MjMeldBack(false, u) }
+                    myY += g(95f)
+                } else {
+                    var ty = myY
+                    m.tiles.forEachIndexed { ti, t ->
+                        when {
+                            m.tiles.size >= 4 && ti == 3 ->
+                                Place(fx(86f), ty - fy(7f)) { MjSmallTile(t.code, 3, u) }
+                            ti == claimed -> {
+                                if (ti > 0) ty += fy(6f)
+                                Place(fx(86f), ty) { MjSmallTile(t.code, 0, u) }; ty += g(40f)
+                            }
+                            else -> { Place(fx(86f), ty) { MjSmallTile(t.code, 3, u) }; ty += g(30f) }
+                        }
+                    }
+                    myY = ty + fy(5f)
+                }
+            }
+            // 手牌背：cemian4 竖列，副露之下，步距 22 重叠
+            val handTop = myY + fy(5f)
+            repeat(left.handCount.coerceIn(1, 14)) { idx ->
+                Place(fx(86f), handTop + g(22f) * idx) {
+                    Box(
+                        Modifier.graphicsLayer {
+                            val p = ((deal.value * 1200f - idx * 40f) / 280f).coerceIn(0f, 1f)
+                            alpha = 0.25f + 0.75f * p
+                            val s = 0.7f + 0.3f * p
+                            scaleX = s; scaleY = s
+                        }
+                    ) { MjBackTile(3, u) }
+                }
+            }
+        }
+
+        // ================= 四家牌河（DrawFlatGived 1:1，晚于他家副露绘制） =================
         // 下家方向语义：pos0=我(下) dir0 / pos1=右 dir1 / pos2=上 dir2 / pos3=左 dir3
         // 我方牌河：11/9/7 金字塔，x 居中起步，行向右移 51、行距上移 (76-15)
         run {
@@ -478,35 +624,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             ) { MjTableTile(right.river[ri].code, 1, u) }
         }
 
-        // ================= 他家手牌背面（DrawFlatPE/PN/PW 隐藏态 1:1） =================
-        // 右家：cemian2 竖列，x=702，步距 22 重叠
-        repeat(right.handCount.coerceIn(1, 14)) { idx ->
-            Place(fx(702f), fy(80f) + g(22f) * idx) {
-                Box(
-                    Modifier.graphicsLayer {
-                        val p = ((deal.value * 1200f - idx * 40f) / 280f).coerceIn(0f, 1f)
-                        alpha = 0.25f + 0.75f * p
-                        val s = 0.7f + 0.3f * p
-                        scaleX = s; scaleY = s
-                    }
-                ) { MjBackTile(1, u) }
-            }
-        }
-        // 上家：cemian3 横排相邻，x=200 起步，步距 32
-        repeat(top.handCount.coerceIn(1, 14)) { idx ->
-            Place(fx(200f) + g(32f) * idx, fy(78f)) {
-                Box(
-                    Modifier.graphicsLayer {
-                        val p = ((deal.value * 1200f - idx * 40f) / 280f).coerceIn(0f, 1f)
-                        alpha = 0.25f + 0.75f * p
-                        val s = 0.7f + 0.3f * p
-                        scaleX = s; scaleY = s
-                    }
-                ) { MjBackTile(2, u) }
-            }
-        }
-
-        // ================= 四家副露（DrawFlatPS/PE/PN/PW 副露逻辑 1:1） =================
+        // ================= 我方副露（DrawFlatPS，APK 中晚于牌河绘制） =================
         /** 供牌者给的牌 = tiles.last()（引擎规则），横躺/转向摆放；暗杠(from<0)加压杆 */
         // 我方：左边缘向右横排；立牌 y=H-76、供牌横躺 y=H-64；步距 51/64
         run {
@@ -522,107 +640,6 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 }
                 if (claimed < 0 && m.tiles.size >= 4) Place(meldStart, yNorm - g(10f)) { MjGangCover(u) }
                 mx += fx(10f)
-            }
-        }
-        // 右家：手牌列下方竖排（APK PE：起始 y=fy(80)+g(22)*(n-1)+fy(31)；供牌 dir0 步距40，
-        // 立牌 dir1 步距30；暗杠=4张 cc1 背0.9（0/30/60+叠15）；明杠第4张叠在末位上移7）
-        run {
-            var myY = fy(80f) + g(22f) * (right.handCount.coerceIn(1, 14) - 1) + fy(31f)
-            right.melds.forEach { m ->
-                val claimed = if (m.from >= 0) m.tiles.lastIndex else -1
-                if (claimed < 0 && m.tiles.size >= 4) {
-                    Place(fx(702f), myY) { MjMeldBack(false, u) }
-                    Place(fx(702f), myY + g(30f)) { MjMeldBack(false, u) }
-                    Place(fx(702f), myY + g(60f)) { MjMeldBack(false, u) }
-                    Place(fx(702f), myY + g(15f)) { MjMeldBack(false, u) }
-                    myY += g(95f)
-                } else {
-                    var ty = myY
-                    m.tiles.forEachIndexed { ti, t ->
-                        when {
-                            m.tiles.size >= 4 && ti == 3 ->
-                                Place(fx(702f), ty - fy(7f)) { MjSmallTile(t.code, 1, u) }
-                            ti == claimed -> {
-                                if (ti > 0) ty += fy(6f)
-                                Place(fx(702f), ty) { MjSmallTile(t.code, 0, u) }; ty += g(40f)
-                            }
-                            else -> { Place(fx(702f), ty) { MjSmallTile(t.code, 1, u) }; ty += g(30f) }
-                        }
-                    }
-                    myY = ty + fy(5f)
-                }
-            }
-        }
-        // 上家：手牌排右侧横排（APK PN：立牌 dir2 步距51；供牌横躺 dir3 上移11 步距64；
-        // 暗杠=4张 cc2 背（第4张叠第2位上移12）；明杠第4张叠在末位上移12）
-        run {
-            var mx2 = fx(200f) + g(32f) * top.handCount.coerceIn(1, 14) + fx(10f)
-            top.melds.forEach { m ->
-                val claimed = if (m.from >= 0) m.tiles.lastIndex else -1
-                if (claimed < 0 && m.tiles.size >= 4) {
-                    Place(mx2, fy(78f)) { MjMeldBack(true, u) }
-                    Place(mx2 + g(48f), fy(78f)) { MjMeldBack(true, u) }
-                    Place(mx2 + g(96f), fy(78f)) { MjMeldBack(true, u) }
-                    Place(mx2 + g(48f), fy(78f) - g(12f)) { MjMeldBack(true, u) }
-                    mx2 += g(144f) + fx(10f)
-                } else {
-                    var tx = mx2
-                    m.tiles.forEachIndexed { ti, t ->
-                        when {
-                            // 明杠第4张在循环后叠画，不占步距
-                            m.tiles.size >= 4 && ti == 3 -> {}
-                            ti == claimed -> { Place(tx, fy(78f) - g(11f)) { MjTableTile(t.code, 3, u) }; tx += g(64f) }
-                            else -> { Place(tx, fy(78f)) { MjTableTile(t.code, 2, u) }; tx += g(51f) }
-                        }
-                    }
-                    if (m.tiles.size >= 4) {
-                        Place(tx - g(51f), fy(78f) - g(12f)) { MjTableTile(m.tiles[3].code, 2, u) }
-                    }
-                    mx2 = tx + fx(10f)
-                }
-            }
-        }
-        // 左家（APK PW：副露自 fy(78) 向下，手牌背在副露之下；供牌 dir0 步距40，
-        // 立牌 dir3 步距30；暗杠=4张 cc1 背0.9；明杠第4张叠在末位上移7）
-        run {
-            var myY = fy(78f)
-            left.melds.forEach { m ->
-                val claimed = if (m.from >= 0) m.tiles.lastIndex else -1
-                if (claimed < 0 && m.tiles.size >= 4) {
-                    Place(fx(86f), myY) { MjMeldBack(false, u) }
-                    Place(fx(86f), myY + g(30f)) { MjMeldBack(false, u) }
-                    Place(fx(86f), myY + g(60f)) { MjMeldBack(false, u) }
-                    Place(fx(86f), myY + g(15f)) { MjMeldBack(false, u) }
-                    myY += g(95f)
-                } else {
-                    var ty = myY
-                    m.tiles.forEachIndexed { ti, t ->
-                        when {
-                            m.tiles.size >= 4 && ti == 3 ->
-                                Place(fx(86f), ty - fy(7f)) { MjSmallTile(t.code, 3, u) }
-                            ti == claimed -> {
-                                if (ti > 0) ty += fy(6f)
-                                Place(fx(86f), ty) { MjSmallTile(t.code, 0, u) }; ty += g(40f)
-                            }
-                            else -> { Place(fx(86f), ty) { MjSmallTile(t.code, 3, u) }; ty += g(30f) }
-                        }
-                    }
-                    myY = ty + fy(5f)
-                }
-            }
-            // 手牌背：cemian4 竖列，副露之下，步距 22 重叠
-            val handTop = myY + fy(5f)
-            repeat(left.handCount.coerceIn(1, 14)) { idx ->
-                Place(fx(86f), handTop + g(22f) * idx) {
-                    Box(
-                        Modifier.graphicsLayer {
-                            val p = ((deal.value * 1200f - idx * 40f) / 280f).coerceIn(0f, 1f)
-                            alpha = 0.25f + 0.75f * p
-                            val s = 0.7f + 0.3f * p
-                            scaleX = s; scaleY = s
-                        }
-                    ) { MjBackTile(3, u) }
-                }
             }
         }
 
@@ -756,16 +773,39 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 }
             }
             if (snap.myClaims.isNotEmpty()) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    snap.myClaims.forEach { opt ->
-                        when (opt.kind) {
-                            "HU" -> MjImageButton(R.drawable.mj_btn_hu, 46.dp) { vm.doClaim(opt) }
-                            "GANG" -> MjImageButton(R.drawable.mj_btn_gang, 46.dp) { vm.doClaim(opt) }
-                            "PENG" -> MjImageButton(R.drawable.mj_btn_peng, 46.dp) { vm.doClaim(opt) }
-                            "CHI" -> MjImageButton(R.drawable.mj_btn_chi, 46.dp) { vm.doClaim(opt) }
+                // 宣告按钮：胡>杠>碰>吃排序；多种吃法在按钮上方展示所吃三张便于区分；每行最多 4 个防溢出
+                val order = mapOf("HU" to 0, "GANG" to 1, "PENG" to 2, "CHI" to 3)
+                val claimRows = snap.myClaims.sortedBy { order[it.kind] ?: 9 }.chunked(4)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.End) {
+                    claimRows.forEachIndexed { ri, chunk ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            chunk.forEach { opt ->
+                                when (opt.kind) {
+                                    "CHI" -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        // 该吃法实际吃成的顺子三张（含打出的那张），区分多种吃
+                                        Row(
+                                            Modifier
+                                                .clip(RoundedCornerShape(7.dp))
+                                                .background(Color(0xB30E2B26))
+                                                .padding(horizontal = 3.dp, vertical = 2.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                        ) {
+                                            (opt.chiMid - 1..opt.chiMid + 1).forEach { c ->
+                                                MjTileView(tile = codeTile(c), w = 17.dp)
+                                            }
+                                        }
+                                        MjImageButton(R.drawable.mj_btn_chi, 46.dp) { vm.doClaim(opt) }
+                                    }
+                                    "HU" -> MjImageButton(R.drawable.mj_btn_hu, 46.dp) { vm.doClaim(opt) }
+                                    "GANG" -> MjImageButton(R.drawable.mj_btn_gang, 46.dp) { vm.doClaim(opt) }
+                                    "PENG" -> MjImageButton(R.drawable.mj_btn_peng, 46.dp) { vm.doClaim(opt) }
+                                }
+                            }
+                            if (ri == claimRows.lastIndex) {
+                                MjImageButton(R.drawable.mj_btn_pass, 42.dp) { vm.passClaim() }
+                            }
                         }
                     }
-                    MjImageButton(R.drawable.mj_btn_pass, 42.dp) { vm.passClaim() }
                 }
             }
         }

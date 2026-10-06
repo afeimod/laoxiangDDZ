@@ -62,9 +62,22 @@ private val FACE_CC = floatArrayOf(
 )
 
 /**
- * 逐张刻字对中：令面图内容中心经「缩放+旋转」后正好落在牌体白面中心。
- * [scale]=面图缩放；[halfW]/[halfH]=缩放后面图半宽/半高；
- * [tx]/[ty]=牌体白面中心（盒坐标）：立牌 (25,32)（小牌 ×0.8）、横躺 (31.5,32)（小牌 ×0.8）。
+ * 桌牌/小牌四方向刻字目标点（盒坐标）——取自 APK 字节码实测：
+ * DrawCCMj/drawSmallMj 把面图绕自身中心旋转后放到固定画布中心，
+ * 换算成「面内容中心」的目标位置（中值内容 (43.8,70.8)，逐张偏差另由 FACE_CC 补偿）：
+ *   桌牌(面 0.573)：dir0=(25.10,30.57) dir1=(33.07,33.40) dir2=(25.90,31.43) dir3=(32.93,32.60)
+ *   小牌(面 0.4584)：dir0=(20.08,28.46) dir1=(26.96,26.42) dir2=(21.92,27.54) dir3=(26.04,25.58)
+ * 注意横躺方向（dir1/3）目标比白面几何中心 (31.5,32) 略低且偏右——这是原版观感（用户对比确认），
+ * 纯几何居中反而显"偏上"。
+ */
+private val TABLE_CC_X = floatArrayOf(25.10f, 33.07f, 25.90f, 32.93f)
+private val TABLE_CC_Y = floatArrayOf(30.57f, 33.40f, 31.43f, 32.60f)
+private val SMALL_CC_X = floatArrayOf(20.08f, 26.96f, 21.92f, 26.04f)
+private val SMALL_CC_Y = floatArrayOf(28.46f, 26.42f, 27.54f, 25.58f)
+
+/**
+ * 逐张刻字对中：令面图内容中心经「缩放+旋转」后正好落在 [tx]/[ty] 目标点。
+ * [scale]=面图缩放；[halfW]/[halfH]=缩放后面图半宽/半高。
  * 返回面图未旋转时相对盒左上角的偏移 (ox, oy)（与 Compose 绕自身中心旋转配套）。
  */
 private fun faceCenteredOffset(code: Int, dir: Int, scale: Float, halfW: Float, halfH: Float, tx: Float, ty: Float): Pair<Float, Float> {
@@ -207,12 +220,10 @@ internal fun MjTableTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifi
             contentScale = ContentScale.FillBounds,
             modifier = Modifier.size(boxW, boxH)
         )
-        // 刻字逐张对中（白面对齐法 + 逐张内容中心补偿）：
-        // 中值内容中心 (43.8,70.8) 只能对齐大多数牌，个别牌（一条 cy=74 / 七萬 cy=68）
-        // 在横躺方向会有 ±3u 左右偏差（用户反馈"刻字有点没有居中"）——改为逐张实测值：
+        // 刻字逐张对中：目标点=APK 字节码派生（TABLE_CC_*），逐张内容偏差由 FACE_CC 补偿
         val (ox, oy) = faceCenteredOffset(
             code, dir, 0.573f, halfW = 25.5f, halfH = 36.67f,
-            tx = if (dir == 1 || dir == 3) 31.5f else 25f, ty = 32f
+            tx = TABLE_CC_X[dir], ty = TABLE_CC_Y[dir]
         )
         Image(
             painter = painterResource(psmjRes(code)),
@@ -243,10 +254,10 @@ internal fun MjSmallTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifi
     val fw = u * 89f * 0.4584f          // 40.8u
     val fh = u * 128f * 0.4584f         // 58.68u
     val rotation = when (dir) { 1 -> 270f; 2 -> 180f; 3 -> 90f; else -> 0f }
-    // 逐张对中（同 MjTableTile）：小牌白心 = 立牌(20,25.6) / 横躺(25.2,25.6)，面缩放 0.4584
+    // 逐张对中（同 MjTableTile）：小牌目标点 = APK drawSmallMj 字节码派生（SMALL_CC_*）
     val (ox, oy) = faceCenteredOffset(
         code, dir, 0.4584f, halfW = 20.4f, halfH = 29.34f,
-        tx = if (dir == 1 || dir == 3) 25.2f else 20f, ty = 25.6f
+        tx = SMALL_CC_X[dir], ty = SMALL_CC_Y[dir]
     )
     Box(modifier.size(boxW, boxH)) {
         Image(

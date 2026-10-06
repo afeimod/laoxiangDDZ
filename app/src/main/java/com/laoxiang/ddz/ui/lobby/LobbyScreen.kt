@@ -245,6 +245,14 @@ fun LobbyScreen(
                 }
 
                 Spacer(Modifier.weight(0.55f))
+
+                // 音乐署名（CC BY 4.0 要求）：麻将 BGM = Ishikari Lore - Kevin MacLeod
+                Text(
+                    "麻将背景音乐：Ishikari Lore · Kevin MacLeod (incompetech.com) · CC BY 4.0",
+                    fontSize = 9.sp,
+                    color = Color(0x59FFFFFF),
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
             }
 
         // ---------- 昵称修改弹层
