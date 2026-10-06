@@ -44,6 +44,42 @@ internal fun psmjRes(code: Int): Int = when (code) {
     else -> R.drawable.psmj34
 }
 
+/**
+ * psmj 面图逐张刻字内容中心（89x128 画布，bbox 中点实测）。
+ * 每张牌的刻字在画布中的落位不同（cy 68~74，画布中心 64），
+ * 横躺牌旋转后该偏差会变成左右偏移——逐张补偿后刻字才能全部正中白面。
+ */
+private val FACE_CC = floatArrayOf(
+    43.0f, 73.5f, 43.0f, 71.0f, 43.0f, 69.5f, 43.0f, 71.0f,
+    43.0f, 70.0f, 43.0f, 68.5f, 43.0f, 68.0f, 43.0f, 71.5f,
+    43.0f, 70.0f, 43.5f, 70.0f, 43.0f, 69.5f, 43.0f, 69.5f,
+    43.0f, 69.5f, 43.0f, 70.0f, 43.5f, 69.5f, 43.5f, 69.5f,
+    43.0f, 69.5f, 43.0f, 69.5f, 43.5f, 74.0f, 43.5f, 69.5f,
+    43.5f, 70.5f, 43.0f, 71.5f, 43.5f, 69.5f, 43.0f, 71.5f,
+    43.5f, 70.5f, 43.0f, 70.0f, 45.0f, 69.5f, 45.0f, 69.5f,
+    43.5f, 69.5f, 43.5f, 69.5f, 45.0f, 69.0f, 43.5f, 69.5f,
+    45.0f, 69.0f, 43.5f, 69.5f
+)
+
+/**
+ * 逐张刻字对中：令面图内容中心经「缩放+旋转」后正好落在牌体白面中心。
+ * [scale]=面图缩放；[halfW]/[halfH]=缩放后面图半宽/半高；
+ * [tx]/[ty]=牌体白面中心（盒坐标）：立牌 (25,32)（小牌 ×0.8）、横躺 (31.5,32)（小牌 ×0.8）。
+ * 返回面图未旋转时相对盒左上角的偏移 (ox, oy)（与 Compose 绕自身中心旋转配套）。
+ */
+private fun faceCenteredOffset(code: Int, dir: Int, scale: Float, halfW: Float, halfH: Float, tx: Float, ty: Float): Pair<Float, Float> {
+    val dx = (FACE_CC[code * 2] - 44.5f) * scale      // 内容中心相对画布中心
+    val dy = (FACE_CC[code * 2 + 1] - 64f) * scale
+    val rdx: Float; val rdy: Float
+    when (dir) {
+        1 -> { rdx = dy; rdy = -dx }                   // rot270（顺时针）：上→右
+        2 -> { rdx = -dx; rdy = -dy }                  // rot180
+        3 -> { rdx = -dy; rdy = dx }                   // rot90：上→左
+        else -> { rdx = dx; rdy = dy }
+    }
+    return (tx - rdx - halfW) to (ty - rdy - halfH)
+}
+
 /** code(0..33) -> 旧版单图牌面（工具条小预览用） */
 internal fun faceRes(code: Int): Int = when (code) {
     0 -> R.drawable.mj_wan1; 1 -> R.drawable.mj_wan2; 2 -> R.drawable.mj_wan3
@@ -171,15 +207,13 @@ internal fun MjTableTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifi
             contentScale = ContentScale.FillBounds,
             modifier = Modifier.size(boxW, boxH)
         )
-        // 刻字居中对位（白面对齐法）：psmj 面图画布内容偏下（中值内容中心 43.8,70.8），
-        // 若按 APK 字节码的画布中心定位（dir1=29.17,33）会因画布不对称留白使刻字明显偏离白面。
-        // 改为令面图内容中心旋转后落在牌体白面中心（实测白心：立牌(25,32) 横躺(31.5,32)）：
-        val (ox, oy) = when (dir) {
-            0 -> -0.07f to -8.54f      // 立牌（下）
-            1 -> 2.13f to -5.10f       // 横躺（右）rot270
-            2 -> -0.93f to -0.80f      // 立牌（上）rot180
-            else -> 9.87f to -4.24f    // 横躺（左）rot90
-        }
+        // 刻字逐张对中（白面对齐法 + 逐张内容中心补偿）：
+        // 中值内容中心 (43.8,70.8) 只能对齐大多数牌，个别牌（一条 cy=74 / 七萬 cy=68）
+        // 在横躺方向会有 ±3u 左右偏差（用户反馈"刻字有点没有居中"）——改为逐张实测值：
+        val (ox, oy) = faceCenteredOffset(
+            code, dir, 0.573f, halfW = 25.5f, halfH = 36.67f,
+            tx = if (dir == 1 || dir == 3) 31.5f else 25f, ty = 32f
+        )
         Image(
             painter = painterResource(psmjRes(code)),
             contentDescription = null,
@@ -209,12 +243,11 @@ internal fun MjSmallTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifi
     val fw = u * 89f * 0.4584f          // 40.8u
     val fh = u * 128f * 0.4584f         // 58.68u
     val rotation = when (dir) { 1 -> 270f; 2 -> 180f; 3 -> 90f; else -> 0f }
-    val (ox, oy) = when (dir) {
-        1 -> 1.68f to -4.06f       // 横躺（右）rot270
-        2 -> -0.72f to -0.62f      // 立牌（上）rot180
-        3 -> 7.92f to -3.42f       // 横躺（左）rot90
-        else -> -0.08f to -6.85f   // 立牌（下）
-    }
+    // 逐张对中（同 MjTableTile）：小牌白心 = 立牌(20,25.6) / 横躺(25.2,25.6)，面缩放 0.4584
+    val (ox, oy) = faceCenteredOffset(
+        code, dir, 0.4584f, halfW = 20.4f, halfH = 29.34f,
+        tx = if (dir == 1 || dir == 3) 25.2f else 20f, ty = 25.6f
+    )
     Box(modifier.size(boxW, boxH)) {
         Image(
             painter = painterResource(bodyRes),

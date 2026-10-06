@@ -35,6 +35,9 @@ import com.laoxiang.ddz.data.MjSnapshot
 import com.laoxiang.ddz.data.MjTile
 import com.laoxiang.ddz.ui.common.AvatarImage
 import com.laoxiang.ddz.ui.theme.Gold
+import kotlin.math.abs
+import kotlin.math.sin
+import kotlin.random.Random
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -59,6 +62,31 @@ private val NUM_RES = intArrayOf(
     R.drawable.mj_num4, R.drawable.mj_num5, R.drawable.mj_num6, R.drawable.mj_num7,
     R.drawable.mj_num8, R.drawable.mj_num9
 )
+
+/** 开局掷骰子素材（麻将素材包 sezi1-6_800，78x80） */
+private val DICE_RES = intArrayOf(
+    R.drawable.mj_dice1, R.drawable.mj_dice2, R.drawable.mj_dice3,
+    R.drawable.mj_dice4, R.drawable.mj_dice5, R.drawable.mj_dice6
+)
+
+/** 单颗骰子：掷出中（[rolling]=true）快速变面+旋转，定格后显示 [value] 点 */
+@Composable
+private fun DiceDie(value: Int, rolling: Boolean, p: Float, size: Dp) {
+    val face = if (rolling) (p * 24f).toInt() % 6 else (value - 1).coerceIn(0, 5)
+    Image(
+        painter = painterResource(DICE_RES[face]),
+        contentDescription = "骰子",
+        contentScale = ContentScale.FillBounds,
+        modifier = Modifier
+            .graphicsLayer {
+                rotationZ = if (rolling) p * 900f else 0f
+                val bounce = if (rolling) abs(sin(p * 9.4f)) * 0.16f else 0f
+                val s = (if (rolling) 0.86f + 0.14f * p else 1f) - bounce
+                scaleX = s; scaleY = s
+            }
+            .size(size, size * 80f / 78f)
+    )
+}
 
 /** 横躺牌河蛇形列位：列宽 9/7/5/3/1 递减，返回 (列号, 列内序号)（与 APK 折行逻辑一致） */
 private fun lieRiverCell(i: Int): Pair<Int, Int> {
@@ -225,12 +253,17 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         val left = seats[(mySeat + 3) % 4]
         val selected by vm.selected.collectAsState()
 
-        // ---- 发牌动画：以局号为键每局必重启（round 每次 newMatch 递增，比空→非空检测更可靠） ----
-        // 节奏：总时长 1200ms；我方手牌逐张从中央飞入（每张延迟 40ms、飞行 320ms），
-        // 随后逐张盖牌(mjdeal_cover)翻面（520ms 起每张延迟 30ms、翻面 200ms）；他家牌背依次亮起
+        // ---- 开局仪式：先掷骰子（素材 sezi1-6）再发牌 ----
+        // 以局号为键每局必重启；掷骰 1s（翻滚变面+旋转）→ 定格展示点数 0.75s → 发牌飞入 1.2s
         val deal = remember { Animatable(0f) }
+        val diceRoll = remember { Animatable(0f) }
+        var dicePair by remember { mutableStateOf(intArrayOf(5, 3)) }
         LaunchedEffect(snap.round) {
             deal.snapTo(0f)
+            diceRoll.snapTo(0f)
+            dicePair = intArrayOf(Random.nextInt(1, 7), Random.nextInt(1, 7))
+            diceRoll.animateTo(1f, tween(1000, easing = LinearEasing))
+            delay(750)
             deal.animateTo(1f, tween(1200, easing = LinearEasing))
         }
 
@@ -360,6 +393,24 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 .align(Alignment.Center)
                 .offset(x = -g(85f), y = g(75f))
         )
+
+        // ================= 开局掷骰子（发牌前仪式，罗盘上方居中） =================
+        // 掷骰 1s（变面+旋转+弹跳）→ 定格 0.75s 展示点数 → 发牌动画启动后淡出
+        if (diceRoll.value > 0f && deal.value < 1f) {
+            val diceAlpha = (1f - deal.value * 3f).coerceIn(0f, 1f)
+            if (diceAlpha > 0.01f) {
+                Row(
+                    Modifier
+                        .align(Alignment.Center)
+                        .offset(y = -plateSz / 2 - g(58f))
+                        .graphicsLayer { alpha = diceAlpha }
+                ) {
+                    DiceDie(dicePair[0], diceRoll.value < 1f, diceRoll.value, g(52f))
+                    Spacer(Modifier.width(g(18f)))
+                    DiceDie(dicePair[1], diceRoll.value < 1f, diceRoll.value, g(52f))
+                }
+            }
+        }
 
         // ================= 四家牌河（DrawFlatGived 1:1） =================
         // 下家方向语义：pos0=我(下) dir0 / pos1=右 dir1 / pos2=上 dir2 / pos3=左 dir3
@@ -575,16 +626,20 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             }
         }
 
-        // ================= 我方手牌（DrawFlatPS 1:1：大牌紧贴右对齐 + 摸牌隔34 + 选中上浮25） =================
-        // 摸到的牌（引擎 lastDrawnId）不参与排序，固定放在第 14 墩（隔 34）单独展示，
-        // 打出/宣告后归位重排；吃碰后无摸牌则整手紧排
+        // ================= 我方手牌（整行含摸牌槽整体居中） =================
+        // 摸到的牌（引擎 lastDrawnId）不参与排序，固定在第 14 墩（隔 34）单独展示；
+        // ⚠旧版右锚公式（xStart 基于满 14 坡宽度右移）在副露后（普通牌≤10）会把摸牌排到屏幕外，
+        //   表现为"吃碰杠后看不见摸牌、像先打牌再摸牌"——改为整行（普通牌+间隙+摸牌）居中：
         val hand = me.hand
         val drawnId = snap.drawnTileId
         val normalHand = hand.filter { it.id != drawnId }
         val drawnTile = hand.firstOrNull { it.id == drawnId }
         val bigW = g(89f)
         val bigH = g(128f)
-        val xStart = (W - bigW * 14 - g(34f)) / 2 + bigW * (13 - normalHand.size)
+        val drawnGap = g(34f)
+        val handRowW = bigW * normalHand.size +
+            (if (drawnTile != null) drawnGap + bigW else 0.dp)
+        val xStart = (W - handRowW) / 2
         val yHand = H - bigH
 
         @Composable
@@ -638,7 +693,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             }
         }
         normalHand.forEachIndexed { i, t -> HandTile(i, xStart + bigW * i, t) }
-        drawnTile?.let { t -> HandTile(13, xStart + bigW * 13 + g(34f), t) }
+        drawnTile?.let { t -> HandTile(13, xStart + bigW * normalHand.size + drawnGap, t) }
 
         // ================= 中央提示 =================
         val myTurn = snap.phase == MjPhase.PLAYING && snap.turn == mySeat
