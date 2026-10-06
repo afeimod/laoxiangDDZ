@@ -271,7 +271,9 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         val deal = remember { Animatable(0f) }
         val diceRoll = remember { Animatable(0f) }
         var dicePair by remember { mutableStateOf(intArrayOf(5, 3)) }
+        var dealDone by remember { mutableStateOf(false) }
         LaunchedEffect(snap.round) {
+            dealDone = false
             deal.snapTo(0f)
             diceRoll.snapTo(0f)
             // 骰子点数由引擎掷出（同时决定切墙位置，仪式与发牌一致）
@@ -280,6 +282,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             diceRoll.animateTo(1f, tween(1000, easing = LinearEasing))
             delay(750)
             deal.animateTo(1f, tween(1200, easing = LinearEasing))
+            dealDone = true
         }
 
         var toast by remember { mutableStateOf<Pair<Long, String>?>(null) }
@@ -685,7 +688,9 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                             }
                         }
                         .clickable {
-                            if (t.id in selected) {
+                            if (!dealDone) {
+                                toast = System.nanoTime() to "发牌中，请稍候"
+                            } else if (t.id in selected) {
                                 val err = vm.discardSelected()
                                 if (err != null) toast = System.nanoTime() to err
                             } else vm.toggleSelect(t.id)
@@ -734,15 +739,22 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             )
         }
 
-        // ================= 右下操作区（横条按钮 / 宣告按钮） =================
+        // ================= 操作区（手牌上方居中：横条按钮 / 宣告按钮） =================
         Column(
             Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 8.dp, bottom = bigH + 10.dp),
-            horizontalAlignment = Alignment.End,
+                .align(Alignment.BottomCenter)
+                .padding(bottom = bigH + 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (snap.myHu && dealDone) {
+                    // 自摸胡：摸牌后已能胡时直接亮出胡按钮（用户反馈"已胡无提示"）
+                    MjImageButton(R.drawable.mj_btn_hu, 46.dp) {
+                        val err = vm.selfHu()
+                        if (err != null) toast = System.nanoTime() to err
+                    }
+                }
                 if (snap.anGangCodes.isNotEmpty()) {
                     MjPillButton("暗杠", mjOrangeBrush()) {
                         val err = vm.declareGang(snap.anGangCodes.first(), bu = false, tileId = -1)
@@ -755,7 +767,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                         if (err != null) toast = System.nanoTime() to err
                     }
                 }
-                if (myTurn && snap.awaitingDiscard) {
+                if (myTurn && snap.awaitingDiscard && dealDone) {
                     MjRectButton(R.drawable.mj_btn_hint, 30.dp) {
                         val err = vm.hint()
                         if (err != null) toast = System.nanoTime() to err
@@ -776,7 +788,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 // 宣告按钮：胡>杠>碰>吃排序；多种吃法在按钮上方展示所吃三张便于区分；每行最多 4 个防溢出
                 val order = mapOf("HU" to 0, "GANG" to 1, "PENG" to 2, "CHI" to 3)
                 val claimRows = snap.myClaims.sortedBy { order[it.kind] ?: 9 }.chunked(4)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.End) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     claimRows.forEachIndexed { ri, chunk ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             chunk.forEach { opt ->

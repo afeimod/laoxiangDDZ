@@ -507,16 +507,17 @@ class MjEngine(private val randomSeed: Long? = null) {
         val real = cnt[t.code]
         if (real >= 2) res += MjClaimOpt("PENG", label = "碰")
         if (real >= 3) res += MjClaimOpt("GANG", label = "杠")
-        // 吃（仅大众/癞子；仅上家）
+        // 吃（仅大众/癞子；仅上家）——顺子三张必须同花色（pos 边界严格钳制，
+        // 修复 8万9万+1筒 / 9万+1筒 等跨花色连号被误判为顺子的 bug）
         if (!mode.selfDrawOnly && t.code < 27 && s == (claimCtxSeat + 1) % 4) {
             val pos = t.code % 9
-            // t 为首
-            if (pos <= 7 && cnt[t.code + 1] > 0 && cnt[t.code + 2] > 0)
+            // t 为首：t+1、t+2 须仍在同花色内（pos+2 ≤ 8）
+            if (pos <= 6 && cnt[t.code + 1] > 0 && cnt[t.code + 2] > 0)
                 res += MjClaimOpt("CHI", chiMid = t.code + 1, label = "吃")
-            // t 为中
-            if (pos in 1..8 && cnt[t.code - 1] > 0 && cnt[t.code + 1] > 0)
+            // t 为中：t-1、t+1 须同花色（pos-1 ≥ 0 且 pos+1 ≤ 8）
+            if (pos in 1..7 && cnt[t.code - 1] > 0 && cnt[t.code + 1] > 0)
                 res += MjClaimOpt("CHI", chiMid = t.code, label = "吃")
-            // t 为尾
+            // t 为尾：t-2、t-1 须同花色（pos-2 ≥ 0）
             if (pos >= 2 && cnt[t.code - 2] > 0 && cnt[t.code - 1] > 0)
                 res += MjClaimOpt("CHI", chiMid = t.code - 1, label = "吃")
         }
