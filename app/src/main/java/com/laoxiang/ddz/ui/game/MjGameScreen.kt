@@ -446,8 +446,9 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 ) { MjBackTile(1, u) }
             }
         }
-        // 右家副露：手牌列下方竖排（APK PE：起始 y=fy(80)+g(22)*(n-1)+fy(31)；供牌 dir0 步距40，
-        // 立牌 dir1 步距30；暗杠=4张 cc1 背0.9（0/30/60+叠15）；明杠第4张叠在末位上移7）
+        // 右家副露：手牌列下方竖排（APK PE 字节码实测：全部牌横躺 dir1 步距30；
+        // 仅明杠第4张直立 dir0 并盖 cc1 背（0/30/60+叠15 为暗杠4背）——
+        // 不可把吃碰的供牌画成直立（1.4.10 行为），真机观感为牌列里突兀一块立牌）
         run {
             var myY = fy(80f) + g(22f) * (right.handCount.coerceIn(1, 14) - 1) + fy(31f)
             right.melds.forEach { m ->
@@ -461,14 +462,12 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 } else {
                     var ty = myY
                     m.tiles.forEachIndexed { ti, t ->
-                        when {
-                            m.tiles.size >= 4 && ti == 3 ->
-                                Place(fx(702f), ty - fy(7f)) { MjSmallTile(t.code, 1, u) }
-                            ti == claimed -> {
-                                if (ti > 0) ty += fy(6f)
-                                Place(fx(702f), ty) { MjSmallTile(t.code, 0, u) }; ty += g(40f)
-                            }
-                            else -> { Place(fx(702f), ty) { MjSmallTile(t.code, 1, u) }; ty += g(30f) }
+                        if (m.tiles.size >= 4 && ti == 3) {
+                            Place(fx(702f), ty) { MjSmallTile(t.code, 0, u) }
+                            Place(fx(702f), ty) { MjMeldBack(false, u) }
+                            ty += g(30f)
+                        } else {
+                            Place(fx(702f), ty) { MjSmallTile(t.code, 1, u) }; ty += g(30f)
                         }
                     }
                     myY = ty + fy(5f)
@@ -488,8 +487,9 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 ) { MjBackTile(2, u) }
             }
         }
-        // 上家副露：手牌排右侧横排（APK PN：立牌 dir2 步距51；供牌横躺 dir3 上移11 步距64；
-        // 暗杠=4张 cc2 背（第4张叠第2位上移12）；明杠第4张叠在末位上移12）
+        // 上家副露：手牌排右侧横排（APK PN 字节码实测：全部牌直立 dir2 步距51——
+        // 供牌不做横躺特判（1.4.10 把供牌画成横躺 dir3，真机上与牌河混成一条怪列）；
+        // 暗杠=4张 cc2 背（第4张叠第2位上移12）；明杠=3张 dir2 + cc2 背盖在第2槽上移12，第4张不画）
         run {
             var mx2 = fx(200f) + g(32f) * top.handCount.coerceIn(1, 14) + fx(10f)
             top.melds.forEach { m ->
@@ -504,21 +504,22 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                     var tx = mx2
                     m.tiles.forEachIndexed { ti, t ->
                         when {
-                            // 明杠第4张在循环后叠画，不占步距
+                            // 明杠第4张不画面（APK PN：cc2 背盖第2槽）
                             m.tiles.size >= 4 && ti == 3 -> {}
-                            ti == claimed -> { Place(tx, fy(78f) - g(11f)) { MjTableTile(t.code, 3, u) }; tx += g(64f) }
                             else -> { Place(tx, fy(78f)) { MjTableTile(t.code, 2, u) }; tx += g(51f) }
                         }
                     }
                     if (m.tiles.size >= 4) {
-                        Place(tx - g(51f), fy(78f) - g(12f)) { MjTableTile(m.tiles[3].code, 2, u) }
+                        // APK PN：cc2 背盖在从右数第2槽（tx 已进3格 → 回退2格），上移12设计px
+                        Place(tx - g(51f) * 2, fy(78f) - g(12f)) { MjGangCover(u) }
                     }
                     mx2 = tx + fx(10f)
                 }
             }
         }
-        // 左家副露+手牌背（APK PW：副露自 fy(78) 向下，手牌背在副露之下；供牌 dir0 步距40，
-        // 立牌 dir3 步距30；暗杠=4张 cc1 背0.9；明杠第4张叠在末位上移7）
+        // 左家副露+手牌背（APK PW 字节码实测：全部牌横躺 dir3 步距30——
+        // 仅明杠第4张直立 dir0 并盖 cc1 背；暗杠=4张 cc1 背0.9——
+        // 不可把吃碰的供牌画成直立（1.4.10 行为），真机观感为牌列里突兀一块立牌）
         run {
             var myY = fy(78f)
             left.melds.forEach { m ->
@@ -532,14 +533,12 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 } else {
                     var ty = myY
                     m.tiles.forEachIndexed { ti, t ->
-                        when {
-                            m.tiles.size >= 4 && ti == 3 ->
-                                Place(fx(86f), ty - fy(7f)) { MjSmallTile(t.code, 3, u) }
-                            ti == claimed -> {
-                                if (ti > 0) ty += fy(6f)
-                                Place(fx(86f), ty) { MjSmallTile(t.code, 0, u) }; ty += g(40f)
-                            }
-                            else -> { Place(fx(86f), ty) { MjSmallTile(t.code, 3, u) }; ty += g(30f) }
+                        if (m.tiles.size >= 4 && ti == 3) {
+                            Place(fx(86f), ty) { MjSmallTile(t.code, 0, u) }
+                            Place(fx(86f), ty) { MjMeldBack(false, u) }
+                            ty += g(30f)
+                        } else {
+                            Place(fx(86f), ty) { MjSmallTile(t.code, 3, u) }; ty += g(30f)
                         }
                     }
                     myY = ty + fy(5f)

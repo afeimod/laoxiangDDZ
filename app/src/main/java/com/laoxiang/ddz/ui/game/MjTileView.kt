@@ -62,16 +62,18 @@ private val FACE_CC = floatArrayOf(
 )
 
 /**
- * 桌牌/小牌四方向刻字目标点（盒坐标）——刻字「墨迹中心」必须落在牌体白面几何中心：
- *   立牌白面中心 (25,32)（body 51x76，白面 rows 2..62）；横躺白面中心 (31.5,32)（body 64x64，白面 rows 13..51）
- *   小牌 = ×0.8：立牌 (20,25.6) / 横躺 (25.2,25.6)
- * 逐张偏差另由 FACE_CC（墨迹 bbox 中心实测）补偿，保证每张牌的刻字都正中白面。
- * （旧版按 APK 字节码常量取目标点，用户真机反馈横躺刻字仍"偏上"——改为直接以白面几何中心为准。）
+ * 桌牌/小牌四方向刻字目标点（盒坐标）——APK 字节码实测（本会话第三次逐支路独立解码复核）：
+ * DrawCCMj/drawSmallMj 把面图绕自身中心旋转后放到固定画布中心，换算成「墨迹中心」目标位置：
+ *   桌牌(面 0.573)：dir0=(25.10,30.57) dir1=(33.07,33.40) dir2=(25.90,31.43) dir3=(32.93,32.60)
+ *   小牌(面 0.4584)：dir0=(20.08,28.46) dir1=(26.96,26.42) dir2=(21.92,27.54) dir3=(26.04,25.58)
+ * 注意：横躺方向（dir1/3）目标比白面几何中心 (31.5,32) 低 1.4u——这是原版真机观感，
+ * 不可改回几何居中（1.4.10 曾回退到 (31.5,32)，用户立即反馈"更往上了"）。
+ * 渲染器精度已实测验证：dir1 河牌刻字落点与目标偏差 <0.4u，dir3 小牌 +0.35u——公式无误。
  */
-private val TABLE_CC_X = floatArrayOf(25.0f, 31.5f, 25.0f, 31.5f)
-private val TABLE_CC_Y = floatArrayOf(32.0f, 32.0f, 32.0f, 32.0f)
-private val SMALL_CC_X = floatArrayOf(20.0f, 25.2f, 20.0f, 25.2f)
-private val SMALL_CC_Y = floatArrayOf(25.6f, 25.6f, 25.6f, 25.6f)
+private val TABLE_CC_X = floatArrayOf(25.10f, 33.07f, 25.90f, 32.93f)
+private val TABLE_CC_Y = floatArrayOf(30.57f, 33.40f, 31.43f, 32.60f)
+private val SMALL_CC_X = floatArrayOf(20.08f, 26.96f, 21.92f, 26.04f)
+private val SMALL_CC_Y = floatArrayOf(28.46f, 26.42f, 27.54f, 25.58f)
 
 /**
  * 逐张刻字对中：令面图内容中心经「缩放+旋转」后正好落在 [tx]/[ty] 目标点。
