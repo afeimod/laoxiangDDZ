@@ -124,6 +124,8 @@ data class MjSnapshot(
     /** 开局骰子点数（1..6；旧快照/未掷为 -1） */
     val dice1: Int = -1,
     val dice2: Int = -1,
+    /** 四家实时累计分（含刮风下雨；按座位 0..3，用于中央骰盒点数显示） */
+    val scores: List<Int> = emptyList(),
     val result: MjResult? = null
 )
 
@@ -507,17 +509,17 @@ class MjEngine(private val randomSeed: Long? = null) {
         val real = cnt[t.code]
         if (real >= 2) res += MjClaimOpt("PENG", label = "碰")
         if (real >= 3) res += MjClaimOpt("GANG", label = "杠")
-        // 吃（仅大众/癞子；仅上家）——顺子三张必须同花色（pos 边界严格钳制，
-        // 修复 8万9万+1筒 / 9万+1筒 等跨花色连号被误判为顺子的 bug）
+        // 吃（仅大众/癞子；仅上家）——顺子三张必须同花色，pos 边界防止跨到下一花色
+        // （如 8万+9万+1筒：8万 pos=7 为首时 code+2=1筒 跨花色，必须禁止）
         if (!mode.selfDrawOnly && t.code < 27 && s == (claimCtxSeat + 1) % 4) {
             val pos = t.code % 9
-            // t 为首：t+1、t+2 须仍在同花色内（pos+2 ≤ 8）
+            // t 为首（需 pos+2 ≤ 8）
             if (pos <= 6 && cnt[t.code + 1] > 0 && cnt[t.code + 2] > 0)
                 res += MjClaimOpt("CHI", chiMid = t.code + 1, label = "吃")
-            // t 为中：t-1、t+1 须同花色（pos-1 ≥ 0 且 pos+1 ≤ 8）
+            // t 为中（需 1 ≤ pos ≤ 7）
             if (pos in 1..7 && cnt[t.code - 1] > 0 && cnt[t.code + 1] > 0)
                 res += MjClaimOpt("CHI", chiMid = t.code, label = "吃")
-            // t 为尾：t-2、t-1 须同花色（pos-2 ≥ 0）
+            // t 为尾（需 pos-2 ≥ 0）
             if (pos >= 2 && cnt[t.code - 2] > 0 && cnt[t.code - 1] > 0)
                 res += MjClaimOpt("CHI", chiMid = t.code - 1, label = "吃")
         }
@@ -918,6 +920,7 @@ class MjEngine(private val randomSeed: Long? = null) {
             buGangIds = if (myTurnToAct) buGangOptions(s).map { it.id } else emptyList(),
             dice1 = dice1,
             dice2 = dice2,
+            scores = (0 until 4).map { i -> (scoreAcc[i] ?: 0) + (gangDelta[i] ?: 0) },
             result = result
         )
     }

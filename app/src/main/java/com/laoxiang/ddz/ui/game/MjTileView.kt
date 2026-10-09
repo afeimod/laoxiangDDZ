@@ -1,113 +1,234 @@
 package com.laoxiang.ddz.ui.game
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.laoxiang.ddz.R
 import com.laoxiang.ddz.data.MjTile
 
 /**
- * 麻将渲染 v5 —— 完全按参考 APK（net.joygames.chinamj）素材与合成方式 1:1 移植：
- * - 大牌（手牌，DrawMj）  = psmj0 白胚 + psmj 面 89x128 原尺寸叠加
- * - 桌牌（牌河/副露，DrawCCMj）= 白胚 tablemj*_0 1:1 + 面 0.573 缩放旋转
- * - 小牌（他家手牌/副露，drawSmallMj）= 白胚 0.8 + 面 0.4584 旋转
- * - 四方向旋转角：下 0° / 右 270° / 上 180° / 左 90°（与 APK 字节码一致）
- * - 他家手牌背面：cemian2/3/4（右/上/左）
- * 所有偏移均取自反编译得到的常量（1280 设计空间，[u] 为每设计像素的 Dp 数）。
+ * 麻将渲染 v6 —— 按用户视频（天凤风格）完全重制：
+ * - 白胚牌体由 Canvas 绘制（象牙白渐变+灰描边+底部厚度边），任意立/横方向厚度恒在下方
+ * - 刻字 = PIL 预生成的 34 张透明字层（ten_g*，黑墨数字+红萬/蓝红筒圈/绿索/黑字牌红中绿发）
+ * - 牌墙背面 = ten_wall（黑面+灰刻東+白下缘），左右墙旋转 90°
+ * - 可鸣高亮 = 视频中的青蓝色牌身
  */
 
-/** code(0..33) -> psmj 贴图资源（psmj0=白胚 1-9万 10-18索 19-27筒 28-34字 35-42花） */
-internal fun psmjRes(code: Int): Int = when (code) {
-    0 -> R.drawable.psmj1; 1 -> R.drawable.psmj2; 2 -> R.drawable.psmj3
-    3 -> R.drawable.psmj4; 4 -> R.drawable.psmj5; 5 -> R.drawable.psmj6
-    6 -> R.drawable.psmj7; 7 -> R.drawable.psmj8; 8 -> R.drawable.psmj9
-    9 -> R.drawable.psmj19; 10 -> R.drawable.psmj20; 11 -> R.drawable.psmj21
-    12 -> R.drawable.psmj22; 13 -> R.drawable.psmj23; 14 -> R.drawable.psmj24
-    15 -> R.drawable.psmj25; 16 -> R.drawable.psmj26; 17 -> R.drawable.psmj27
-    18 -> R.drawable.psmj10; 19 -> R.drawable.psmj11; 20 -> R.drawable.psmj12
-    21 -> R.drawable.psmj13; 22 -> R.drawable.psmj14; 23 -> R.drawable.psmj15
-    24 -> R.drawable.psmj16; 25 -> R.drawable.psmj17; 26 -> R.drawable.psmj18
-    27 -> R.drawable.psmj28; 28 -> R.drawable.psmj29; 29 -> R.drawable.psmj30
-    30 -> R.drawable.psmj31; 31 -> R.drawable.psmj32; 32 -> R.drawable.psmj33
-    else -> R.drawable.psmj34
+/** code(0..33) -> ten_g 字层资源（0-8万 9-17筒 18-26条 27東 28南 29西 30北 31白 32发 33中） */
+internal fun tenGlyphRes(code: Int): Int = when (code) {
+    0 -> R.drawable.ten_gm1; 1 -> R.drawable.ten_gm2; 2 -> R.drawable.ten_gm3
+    3 -> R.drawable.ten_gm4; 4 -> R.drawable.ten_gm5; 5 -> R.drawable.ten_gm6
+    6 -> R.drawable.ten_gm7; 7 -> R.drawable.ten_gm8; 8 -> R.drawable.ten_gm9
+    9 -> R.drawable.ten_gp1; 10 -> R.drawable.ten_gp2; 11 -> R.drawable.ten_gp3
+    12 -> R.drawable.ten_gp4; 13 -> R.drawable.ten_gp5; 14 -> R.drawable.ten_gp6
+    15 -> R.drawable.ten_gp7; 16 -> R.drawable.ten_gp8; 17 -> R.drawable.ten_gp9
+    18 -> R.drawable.ten_gs1; 19 -> R.drawable.ten_gs2; 20 -> R.drawable.ten_gs3
+    21 -> R.drawable.ten_gs4; 22 -> R.drawable.ten_gs5; 23 -> R.drawable.ten_gs6
+    24 -> R.drawable.ten_gs7; 25 -> R.drawable.ten_gs8; 26 -> R.drawable.ten_gs9
+    27 -> R.drawable.ten_gz1; 28 -> R.drawable.ten_gz2; 29 -> R.drawable.ten_gz3
+    30 -> R.drawable.ten_gz4; 31 -> R.drawable.ten_gz5; 32 -> R.drawable.ten_gz6
+    else -> R.drawable.ten_gz7
 }
 
-/**
- * psmj 面图逐张刻字内容中心（89x128 画布，bbox 中点实测）。
- * 每张牌的刻字在画布中的落位不同（cy 68~74，画布中心 64），
- * 横躺牌旋转后该偏差会变成左右偏移——逐张补偿后刻字才能全部正中白面。
- */
-private val FACE_CC = floatArrayOf(
-    43.0f, 73.5f, 42.5f, 71.0f, 42.5f, 69.5f, 42.5f, 71.0f,
-    42.5f, 70.0f, 42.5f, 68.5f, 42.5f, 68.0f, 43.0f, 71.5f,
-    42.5f, 70.0f, 43.5f, 74.0f, 43.0f, 69.5f, 43.5f, 70.5f,
-    43.5f, 71.5f, 43.0f, 71.0f, 43.5f, 69.5f, 43.0f, 71.5f,
-    43.5f, 70.5f, 43.0f, 70.0f, 43.5f, 70.0f, 43.0f, 69.5f,
-    43.0f, 69.5f, 43.0f, 69.5f, 43.0f, 70.0f, 43.5f, 69.5f,
-    43.5f, 69.5f, 43.0f, 69.5f, 43.0f, 69.5f, 45.0f, 69.5f,
-    45.0f, 69.5f, 43.5f, 69.5f, 43.5f, 69.5f, 43.5f, 69.0f,
-    45.0f, 69.0f, 43.5f, 69.5f
-)
+/** 兼容旧调用（工具条预览） */
+internal fun faceRes(code: Int): Int = tenGlyphRes(code)
+
+/** 牌面主色 */
+private val FACE_TOP = Color(0xFFFDFCF7)
+private val FACE_BOT = Color(0xFFEFEBDF)
+private val FACE_EDGE = Color(0xFFB7B4A8)
+private val FACE_THICK = Color(0xFFD8D4C6)
+private val FACE_THICK_D = Color(0xFFB5B1A2)
+val TEN_HL = Color(0xFF43C7DE)          // 视频青蓝高亮
 
 /**
- * 桌牌/小牌四方向刻字目标点（盒坐标）——APK 字节码实测（本会话第三次逐支路独立解码复核）：
- * DrawCCMj/drawSmallMj 把面图绕自身中心旋转后放到固定画布中心，换算成「墨迹中心」目标位置：
- *   桌牌(面 0.573)：dir0=(25.10,30.57) dir1=(33.07,33.40) dir2=(25.90,31.43) dir3=(32.93,32.60)
- *   小牌(面 0.4584)：dir0=(20.08,28.46) dir1=(26.96,26.42) dir2=(21.92,27.54) dir3=(26.04,25.58)
- * 注意：横躺方向（dir1/3）目标比白面几何中心 (31.5,32) 低 1.4u——这是原版真机观感，
- * 不可改回几何居中（1.4.10 曾回退到 (31.5,32)，用户立即反馈"更往上了"）。
- * 渲染器精度已实测验证：dir1 河牌刻字落点与目标偏差 <0.4u，dir3 小牌 +0.35u——公式无误。
+ * 牌体白胚（Canvas）：[w]x[h] 圆角矩形，底部厚度带。
+ * [highlight]=青蓝牌身（视频可鸣牌）。
  */
-private val TABLE_CC_X = floatArrayOf(25.10f, 33.07f, 25.90f, 32.93f)
-private val TABLE_CC_Y = floatArrayOf(30.57f, 33.40f, 31.43f, 32.60f)
-private val SMALL_CC_X = floatArrayOf(20.08f, 26.96f, 21.92f, 26.04f)
-private val SMALL_CC_Y = floatArrayOf(28.46f, 26.42f, 27.54f, 25.58f)
-
-/**
- * 逐张刻字对中：令面图内容中心经「缩放+旋转」后正好落在 [tx]/[ty] 目标点。
- * [scale]=面图缩放；[halfW]/[halfH]=缩放后面图半宽/半高。
- * 返回面图未旋转时相对盒左上角的偏移 (ox, oy)（与 Compose 绕自身中心旋转配套）。
- */
-private fun faceCenteredOffset(code: Int, dir: Int, scale: Float, halfW: Float, halfH: Float, tx: Float, ty: Float): Pair<Float, Float> {
-    val dx = (FACE_CC[code * 2] - 44.5f) * scale      // 内容中心相对画布中心
-    val dy = (FACE_CC[code * 2 + 1] - 64f) * scale
-    val rdx: Float; val rdy: Float
-    when (dir) {
-        1 -> { rdx = dy; rdy = -dx }                   // rot270（顺时针）：上→右
-        2 -> { rdx = -dx; rdy = -dy }                  // rot180
-        3 -> { rdx = -dy; rdy = dx }                   // rot90：上→左
-        else -> { rdx = dx; rdy = dy }
+@Composable
+fun TenTileBody(
+    w: Dp, h: Dp,
+    modifier: Modifier = Modifier,
+    highlight: Boolean = false,
+    alpha: Float = 1f
+) {
+    val top = if (highlight) Color(0xFF7FDEEC) else FACE_TOP
+    val bot = if (highlight) Color(0xFF2FA8C4) else FACE_BOT
+    Canvas(modifier.size(w, h).graphicsLayer { this.alpha = alpha }) {
+        val th = size.height * 0.10f          // 厚度带高
+        val r = size.width * 0.16f
+        // 厚度（下移的深色圆角矩形）
+        drawRoundRect(
+            Brush.verticalGradient(listOf(FACE_THICK, FACE_THICK_D)),
+            Offset(0f, th * 0.55f), Size(size.width, size.height - th * 0.55f),
+            CornerRadius(r, r)
+        )
+        // 牌面
+        drawRoundRect(
+            Brush.verticalGradient(listOf(top, bot)),
+            Offset(0f, 0f), Size(size.width, size.height - th),
+            CornerRadius(r, r)
+        )
+        // 描边
+        drawRoundRect(
+            FACE_EDGE,
+            Offset(0.75f, 0.75f), Size(size.width - 1.5f, size.height - th - 1.5f),
+            CornerRadius(r, r), Stroke(width = size.width * 0.018f)
+        )
     }
-    return (tx - rdx - halfW) to (ty - rdy - halfH)
 }
 
-/** code(0..33) -> 旧版单图牌面（工具条小预览用） */
-internal fun faceRes(code: Int): Int = when (code) {
-    0 -> R.drawable.mj_wan1; 1 -> R.drawable.mj_wan2; 2 -> R.drawable.mj_wan3
-    3 -> R.drawable.mj_wan4; 4 -> R.drawable.mj_wan5; 5 -> R.drawable.mj_wan6
-    6 -> R.drawable.mj_wan7; 7 -> R.drawable.mj_wan8; 8 -> R.drawable.mj_wan9
-    9 -> R.drawable.mj_tong1; 10 -> R.drawable.mj_tong2; 11 -> R.drawable.mj_tong3
-    12 -> R.drawable.mj_tong4; 13 -> R.drawable.mj_tong5; 14 -> R.drawable.mj_tong6
-    15 -> R.drawable.mj_tong7; 16 -> R.drawable.mj_tong8; 17 -> R.drawable.mj_tong9
-    18 -> R.drawable.mj_tiao1; 19 -> R.drawable.mj_tiao2; 20 -> R.drawable.mj_tiao3
-    21 -> R.drawable.mj_tiao4; 22 -> R.drawable.mj_tiao5; 23 -> R.drawable.mj_tiao6
-    24 -> R.drawable.mj_tiao7; 25 -> R.drawable.mj_tiao8; 26 -> R.drawable.mj_tiao9
-    27 -> R.drawable.mj_east; 28 -> R.drawable.mj_south; 29 -> R.drawable.mj_west
-    30 -> R.drawable.mj_north; 31 -> R.drawable.mj_zhong; 32 -> R.drawable.mj_fa
-    else -> R.drawable.mj_bai
+/** 刻字层（透明 PNG），[rot]=旋转角；[bw]x[bh]=所在牌盒尺寸 */
+@Composable
+private fun TenGlyph(code: Int, bw: Dp, bh: Dp, rot: Float, modifier: Modifier = Modifier, alpha: Float = 1f) {
+    Image(
+        painter = painterResource(tenGlyphRes(code)),
+        contentDescription = null,
+        contentScale = ContentScale.FillBounds,
+        modifier = modifier
+            .size(bw, bh)
+            .graphicsLayer { rotationZ = rot; this.alpha = alpha }
+    )
 }
+
+/** 立牌（手牌/刚出的牌）：白胚 + 正立刻字 */
+@Composable
+fun TenStandTile(
+    code: Int, w: Dp,
+    modifier: Modifier = Modifier,
+    highlight: Boolean = false,
+    alpha: Float = 1f
+) {
+    val h = w * 1.38f
+    Box(modifier.size(w, h)) {
+        TenTileBody(w, h, highlight = highlight, alpha = alpha, modifier = Modifier.matchParentSize())
+        TenGlyph(code, w, h, 0f, Modifier.align(Alignment.Center), alpha)
+    }
+}
+
+/**
+ * 牌河躺牌（视频规则，[scale]=相对手牌缩放，视频约 0.86）：
+ * dir0=我(下) 横盒刻字逆时针90(头朝左) / dir1=右 竖盒刻字正立
+ * dir2=上 横盒刻字顺时针90(头朝右) / dir3=左 竖盒刻字倒立
+ */
+@Composable
+fun TenRiverTile(
+    code: Int, dir: Int, u: Dp,
+    modifier: Modifier = Modifier,
+    highlight: Boolean = false,
+    alpha: Float = 1f,
+    scale: Float = 1f
+) {
+    val pw = u * 64f * scale; val ph = u * 88f * scale
+    when (dir) {
+        1 -> Box(modifier.size(pw, ph)) {
+            TenTileBody(pw, ph, highlight = highlight, alpha = alpha, modifier = Modifier.matchParentSize())
+            TenGlyph(code, pw, ph, 0f, Modifier.align(Alignment.Center), alpha)
+        }
+        3 -> Box(modifier.size(pw, ph)) {
+            TenTileBody(pw, ph, highlight = highlight, alpha = alpha, modifier = Modifier.matchParentSize())
+            TenGlyph(code, pw, ph, 180f, Modifier.align(Alignment.Center), alpha)
+        }
+        2 -> Box(modifier.size(ph, pw)) {
+            TenTileBody(ph, pw, highlight = highlight, alpha = alpha, modifier = Modifier.matchParentSize())
+            TenGlyph(code, pw, ph, 90f, Modifier.align(Alignment.Center), alpha)
+        }
+        else -> Box(modifier.size(ph, pw)) {
+            TenTileBody(ph, pw, highlight = highlight, alpha = alpha, modifier = Modifier.matchParentSize())
+            TenGlyph(code, pw, ph, -90f, Modifier.align(Alignment.Center), alpha)
+        }
+    }
+}
+
+/**
+ * 副露牌：各座位立牌读向不同（dir0=0° dir1=-90° dir2=180° dir3=90°）；
+ * [claimed]=吃碰杠得来的供牌 → 横置（横盒+再转90°，日麻规则侧翻标记）。
+ */
+@Composable
+fun TenMeldTile(
+    code: Int, dir: Int, u: Dp,
+    modifier: Modifier = Modifier,
+    claimed: Boolean = false,
+    scale: Float = 1f
+) {
+    val pw = u * 64f * scale; val ph = u * 88f * scale
+    val baseRot = when (dir) { 1 -> -90f; 2 -> 180f; 3 -> 90f; else -> 0f }
+    if (!claimed) {
+        Box(modifier.size(pw, ph)) {
+            TenTileBody(pw, ph, modifier = Modifier.matchParentSize())
+            TenGlyph(code, pw, ph, baseRot, Modifier.align(Alignment.Center))
+        }
+    } else {
+        Box(modifier.size(ph, pw)) {
+            TenTileBody(ph, pw, modifier = Modifier.matchParentSize())
+            TenGlyph(code, pw, ph, baseRot - 90f, Modifier.align(Alignment.Center))
+        }
+    }
+}
+
+/** 牌墙背面（黑面+灰刻東+白下缘）：rot 0=上墙(白缘朝下=朝中央) 90=右墙 180=下 270=左墙 */
+@Composable
+fun TenWallTile(u: Dp, rot: Float, modifier: Modifier = Modifier, alpha: Float = 1f) {
+    val w = u * 30f
+    val h = u * 22f
+    val boxW = if (rot == 90f || rot == 270f) h else w
+    val boxH = if (rot == 90f || rot == 270f) w else h
+    Image(
+        painter = painterResource(R.drawable.ten_wall),
+        contentDescription = null,
+        contentScale = ContentScale.FillBounds,
+        modifier = modifier
+            .size(boxW, boxH)
+            .graphicsLayer { rotationZ = rot; this.alpha = alpha }
+    )
+}
+
+/** 牌背小图（工具条/预览用）：黑面+灰東 */
+@Composable
+fun TenBackTile(w: Dp, modifier: Modifier = Modifier, alpha: Float = 1f) {
+    val h = w * 1.38f
+    val glyphSp = with(androidx.compose.ui.platform.LocalDensity.current) { (w * 0.62f).toSp() }
+    Box(modifier.size(w, h)) {
+        Canvas(Modifier.matchParentSize().graphicsLayer { this.alpha = alpha }) {
+            val r = size.width * 0.16f
+            drawRoundRect(Color(0xFF14171E), Offset.Zero, size, CornerRadius(r, r))
+            drawRoundRect(
+                Color(0xFF232838),
+                Offset(size.width * 0.08f, size.height * 0.06f),
+                Size(size.width * 0.84f, size.height * 0.5f),
+                CornerRadius(r, r)
+            )
+        }
+        Text(
+            "東", color = Color(0xFF4A5062), fontSize = glyphSp,
+            fontWeight = FontWeight.Black,
+            modifier = Modifier.align(Alignment.Center)
+        )
+    }
+}
+
+// ================================================================ 兼容入口
 
 /** 单张麻将牌（tile=null 或 faceUp=false 画牌背）—— 工具条等小尺寸预览用 */
 @Composable
@@ -121,211 +242,40 @@ fun MjTileView(
     laiziMark: Boolean = false,
     alpha: Float = 1f
 ) {
-    val h = w * 1.38202f
+    val h = w * 1.38f
     val lifted = raised || selected
-    val painter = painterResource(
-        if (!faceUp || tile == null) R.drawable.mj_back else faceRes(tile.code)
-    )
     Box(
         modifier
-            .offset(y = if (lifted) (-10).dp else 0.dp)
-            .then(if (lifted) Modifier.shadow(8.dp, RoundedCornerShape(w / 6)) else Modifier)
+            .offset(y = if (lifted) (-8).dp else 0.dp)
             .size(w, h)
     ) {
-        Image(
-            painter = painter,
-            contentDescription = if (faceUp && tile != null) tile.label else "麻将牌背面",
-            modifier = Modifier.size(w, h),
-            contentScale = ContentScale.FillBounds,
-            alpha = alpha
-        )
-        if (laiziMark && faceUp) {
-            Image(
-                painter = painterResource(R.drawable.mj_mark_caishen),
-                contentDescription = "癞子标记",
-                contentScale = ContentScale.FillBounds,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(end = w * 0.04f, top = w * 0.05f)
-                    .size(w * 0.26f, w * 0.26f * 59f / 30f)
-            )
+        if (!faceUp || tile == null) {
+            TenBackTile(w, Modifier.matchParentSize(), alpha)
+        } else {
+            TenStandTile(tile.code, w, Modifier.matchParentSize(), alpha = alpha)
         }
+        if (laiziMark && faceUp && tile != null) LaiziBadge(w, Modifier.align(Alignment.TopEnd))
     }
 }
 
-/**
- * 大牌合成（APK DrawMj 1:1）：psmj0 白胚(89x123) + psmj 面(89x128) 同位叠加。
- * [u] = 1280 设计空间每像素 Dp 值；宽 89u，高 128u。
- */
+/** 癞子（红中）小红标 */
 @Composable
-internal fun MjBigTile(
-    code: Int,
-    u: Dp,
-    modifier: Modifier = Modifier,
-    laiziMark: Boolean = false,
-    content: @Composable () -> Unit = {}
-) {
-    val w = u * 89f
-    val h = u * 128f
-    Box(modifier.size(w, h)) {
-        Image(
-            painter = painterResource(R.drawable.psmj0),
-            contentDescription = null,
-            contentScale = ContentScale.FillBounds,
-            modifier = Modifier.size(w, u * 123f)
-        )
-        Image(
-            painter = painterResource(psmjRes(code)),
-            contentDescription = null,
-            contentScale = ContentScale.FillBounds,
-            modifier = Modifier.size(w, h)
-        )
-        content()
-        if (laiziMark) {
-            Image(
-                painter = painterResource(R.drawable.mj_mark_caishen),
-                contentDescription = "癞子标记",
-                contentScale = ContentScale.FillBounds,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(end = w * 0.04f, top = w * 0.05f)
-                    .size(w * 0.26f, w * 0.26f * 59f / 30f)
-            )
+fun LaiziBadge(w: Dp, modifier: Modifier = Modifier) {
+    val badgeSp = with(androidx.compose.ui.platform.LocalDensity.current) { (w * 0.20f).toSp() }
+    Box(
+        modifier
+            .size(w * 0.34f, w * 0.34f)
+            .clip(RoundedCornerShape(w * 0.09f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(Modifier.matchParentSize()) {
+            drawRoundRect(Color(0xFFC22A1F), Offset.Zero, size, CornerRadius(size.width * 0.28f))
         }
-    }
-}
-
-/**
- * 桌面牌合成（APK DrawCCMj 1:1）：白胚 1:1 + 面 0.573 缩放旋转。
- * dir: 0=下(立牌 tablemjh0) / 1=右(横躺 tablemjwh0) / 2=上(立牌 tablemjnh0) / 3=左(横躺 tablemjeh0)
- * 占位：dir0/2 = 51x76u，dir1/3 = 64x64u；刻字按 APK 常量偏移（部分向上/侧溢出属原版行为）。
- */
-@Composable
-internal fun MjTableTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifier) {
-    val boxW = if (dir == 1 || dir == 3) u * 64f else u * 51f
-    val boxH = if (dir == 1 || dir == 3) u * 64f else u * 76f
-    val fw = u * 89f * 0.573f          // 51.0u
-    val fh = u * 128f * 0.573f         // 73.34u
-    val bodyRes = when (dir) {
-        1 -> R.drawable.tablemjwh0
-        2 -> R.drawable.tablemjnh0
-        3 -> R.drawable.tablemjeh0
-        else -> R.drawable.tablemjh0
-    }
-    val rotation = when (dir) { 1 -> 270f; 2 -> 180f; 3 -> 90f; else -> 0f }
-    Box(modifier.size(boxW, boxH)) {
-        Image(
-            painter = painterResource(bodyRes),
-            contentDescription = null,
-            contentScale = ContentScale.FillBounds,
-            modifier = Modifier.size(boxW, boxH)
-        )
-        // 刻字逐张对中：目标点=APK 字节码派生（TABLE_CC_*），逐张内容偏差由 FACE_CC 补偿
-        val (ox, oy) = faceCenteredOffset(
-            code, dir, 0.573f, halfW = 25.5f, halfH = 36.67f,
-            tx = TABLE_CC_X[dir], ty = TABLE_CC_Y[dir]
-        )
-        Image(
-            painter = painterResource(psmjRes(code)),
-            contentDescription = null,
-            contentScale = ContentScale.FillBounds,
-            modifier = Modifier
-                .offset(x = u * ox, y = u * oy)
-                .size(fw, fh)
-                .graphicsLayer { rotationZ = rotation }
+        Text(
+            "癩",
+            color = Color.White,
+            fontSize = badgeSp,
+            fontWeight = FontWeight.Black
         )
     }
-}
-
-/**
- * 小牌合成（APK drawSmallMj 1:1）：白胚 0.8 + 面 0.4584 缩放旋转（他家副露）。
- * 偏移改用白面对齐法（同 MjTableTile）：面内容中心落牌体白面中心（小牌白心 ×0.8）。
- */
-@Composable
-internal fun MjSmallTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifier) {
-    val bodyRes = when (dir) {
-        1 -> R.drawable.tablemjwh0
-        2 -> R.drawable.tablemjnh0
-        3 -> R.drawable.tablemjeh0
-        else -> R.drawable.tablemjh0
-    }
-    val boxW = if (dir == 1 || dir == 3) u * 64f * 0.8f else u * 51f * 0.8f
-    val boxH = if (dir == 1 || dir == 3) u * 64f * 0.8f else u * 76f * 0.8f
-    val fw = u * 89f * 0.4584f          // 40.8u
-    val fh = u * 128f * 0.4584f         // 58.68u
-    val rotation = when (dir) { 1 -> 270f; 2 -> 180f; 3 -> 90f; else -> 0f }
-    // 逐张对中（同 MjTableTile）：小牌目标点 = APK drawSmallMj 字节码派生（SMALL_CC_*）
-    val (ox, oy) = faceCenteredOffset(
-        code, dir, 0.4584f, halfW = 20.4f, halfH = 29.34f,
-        tx = SMALL_CC_X[dir], ty = SMALL_CC_Y[dir]
-    )
-    Box(modifier.size(boxW, boxH)) {
-        Image(
-            painter = painterResource(bodyRes),
-            contentDescription = null,
-            contentScale = ContentScale.FillBounds,
-            modifier = Modifier.size(boxW, boxH)
-        )
-        Image(
-            painter = painterResource(psmjRes(code)),
-            contentDescription = null,
-            contentScale = ContentScale.FillBounds,
-            modifier = Modifier
-                .offset(x = u * ox, y = u * oy)
-                .size(fw, fh)
-                .graphicsLayer { rotationZ = rotation }
-        )
-    }
-}
-
-/** 他家手牌背面：右家 cemian2 / 上家 cemian3 / 左家 cemian4（APK w[1]/w[2]/w[3]） */
-@Composable
-internal fun MjBackTile(seatPos: Int, u: Dp, modifier: Modifier = Modifier) {
-    val (res, w, h) = when (seatPos) {
-        1 -> Triple(R.drawable.mjback_e, 24f, 58f)
-        2 -> Triple(R.drawable.mjback_n, 32f, 46f)
-        else -> Triple(R.drawable.mjback_w, 24f, 58f)
-    }
-    Image(
-        painter = painterResource(res),
-        contentDescription = "手牌背面",
-        contentScale = ContentScale.FillBounds,
-        modifier = modifier.size(u * w, u * h)
-    )
-}
-
-/** 明杠压杆（APK v[0]=cc2 盖在暗杠上）/ 暗杠背杆 */
-@Composable
-internal fun MjGangCover(u: Dp, modifier: Modifier = Modifier) {
-    Image(
-        painter = painterResource(R.drawable.mjcc2),
-        contentDescription = null,
-        contentScale = ContentScale.FillBounds,
-        modifier = modifier.size(u * 48f, u * 72f)
-    )
-}
-
-/** 副露暗杠背杆（APK：上家=v[0] cc2 1:1 48x72；右/左家=v[1] cc1 0.9缩放 60x60→54 方） */
-@Composable
-internal fun MjMeldBack(top: Boolean, u: Dp, modifier: Modifier = Modifier) {
-    Image(
-        painter = painterResource(if (top) R.drawable.mjcc2 else R.drawable.mjcc1),
-        contentDescription = null,
-        contentScale = ContentScale.FillBounds,
-        modifier = modifier.size(
-            if (top) u * 48f else u * 60f * 0.9f,
-            if (top) u * 72f else u * 60f * 0.9f
-        )
-    )
-}
-
-/** 发牌盖牌（APK aa=gaipai 89x123 绿背） */
-@Composable
-internal fun MjDealCover(u: Dp, modifier: Modifier = Modifier) {
-    Image(
-        painter = painterResource(R.drawable.mjdeal_cover),
-        contentDescription = null,
-        contentScale = ContentScale.FillBounds,
-        modifier = modifier.size(u * 89f, u * 123f)
-    )
 }
