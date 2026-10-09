@@ -21,6 +21,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -44,13 +45,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * 麻将牌局 —— 按用户视频（天凤风格）1:1 重制：
- * 深灰牌桌（中央方框线+四角斜线）+ 黑色双层牌墙（灰刻東背）+ 中央黑骰盒
- * （四角风位牌、LED 倒计时、四家点数=金/蓝彩带指示行动家、掷骰仪式）
- * + 左右金色竖排玩家栏 + 左上(友人戦/模式金匾/点棒/東1局) + 右上(連荘 chain)
- * + 底部金框玩家条 + 右下金色读秒 + 牌河(6张一行，刚出的牌立起/可鸣青蓝高亮)
- * + 副露(供牌侧翻) + 白手牌(摸牌左端立起隔开) + 黑金操作按钮居中于手牌上方
- * 4:3 视频版面 → 安卓全屏：u = H/480 竖向定标，横向自适应铺满。
+ * 麻将牌局 —— 按用户视频（天凤风格）重制 v2（r2 版式修订）：
+ * 圈层自内向外 = 中央骰盒（LED+四边彩带记分+四角风位）→ 四家牌河（紧贴骰盒，
+ * 6 张一行；自己立牌正读 / 对家立牌倒读 / 左右横躺；最新一张立起）→
+ * 牌墙（深色東刻背+白色牌身双层，沿桌方框三边：上/左/右）→ 侧家白色牌背列（最外）。
+ * 牌面渲染 = 原 APK 素材方案（MjTileView v7：psmj 白胚叠面+字节码刻字对中），详见 MjTileView.kt。
+ * 左上 HUD（友人戦/模式金匾/点棒/東1局）+ 右上 chain + 左右金色玩家栏 + 底部金框玩家条
+ * + 黑金操作按钮居中手牌上方 + 金色读秒。4:3 视频版面 → u = H/480 竖向定标横向铺满。
  */
 
 private val WIND_KANJI = arrayOf("東", "南", "西", "北")
@@ -233,6 +234,8 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         val u = H / 480f
         @Composable fun gDp(v: Float) = u * v
         fun gF(v: Float) = u.value * v
+        // 牌墙方块宽（设计单位；背景 Canvas 与几何块共用）
+        val sqWu = (W.value - 150f).coerceIn(430f, 660f)
 
         // ---------------- 牌桌背景（视频：深灰桌面+中央方框线+四角斜线+底部凹槽） ----------------
         Canvas(Modifier.fillMaxSize()) {
@@ -248,34 +251,37 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             )
             // 外缘暗边（桌沿）
             drawRect(Brush.verticalGradient(listOf(Color(0x66101014), Color(0x00101014), Color(0x55101014))))
+            // 方框区（与牌墙方块一致，由外面传入比例换算）
             val cx = size.width / 2f
-            val cy = gy(240f)
-            val half = gx(300f).coerceAtMost(gy(212f))
+            val sqL = gx((maxWidth.value - sqWu) / 2f)
+            val sqR = gx((maxWidth.value + sqWu) / 2f)
+            val sqT = gy(58f)
+            val sqB = gy(480f - 90f)   // handY(480-66-10) - 14
             val line = Color(0xFF1B1B1F)
-            // 中央方框
-            drawRect(line, Offset(cx - half, cy - half * 0.92f), Size(half * 2f, half * 1.84f), style = Stroke(2f))
-            // 内框
+            drawRect(line, Offset(sqL, sqT), Size(sqR - sqL, sqB - sqT), style = Stroke(2f))
             drawRect(
                 line.copy(alpha = 0.7f),
-                Offset(cx - half * 0.80f, cy - half * 0.74f),
-                Size(half * 1.6f, half * 1.48f), style = Stroke(1.5f)
+                Offset(sqL + (sqR - sqL) * 0.06f, sqT + (sqB - sqT) * 0.06f),
+                Size((sqR - sqL) * 0.88f, (sqB - sqT) * 0.88f), style = Stroke(1.5f)
             )
             // 四角斜线
-            val d = half * 0.55f
+            val d = (sqR - sqL) * 0.09f
             for (sx in listOf(-1f, 1f)) for (sy in listOf(-1f, 1f)) {
                 drawLine(
                     line,
-                    Offset(cx + sx * half * 0.80f, cy + sy * half * 0.74f),
-                    Offset(cx + sx * (half * 0.80f + d), cy + sy * (half * 0.74f + d * 0.92f)),
+                    Offset(if (sx < 0) sqL + (sqR - sqL) * 0.06f else sqR - (sqR - sqL) * 0.06f,
+                           if (sy < 0) sqT + (sqB - sqT) * 0.06f else sqB - (sqB - sqT) * 0.06f),
+                    Offset(if (sx < 0) sqL + (sqR - sqL) * 0.06f - d else sqR - (sqR - sqL) * 0.06f + d,
+                           if (sy < 0) sqT + (sqB - sqT) * 0.06f - d * 0.9f else sqB - (sqB - sqT) * 0.06f + d * 0.9f),
                     2f
                 )
             }
             // 底部凹槽（手牌上方长条）
-            val grooveY = size.height - gy(120f)
+            val grooveY = size.height - gy(96f)
             drawRoundRect(
                 Color(0xFF151518),
                 Offset(cx - gx(330f), grooveY),
-                Size(gx(660f), gy(14f)), CornerRadius(gy(7f))
+                Size(gx(660f), gy(12f)), CornerRadius(gy(6f))
             )
         }
 
@@ -363,21 +369,33 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             vm.opNotice.collect { t -> if (t != null) { toast = System.nanoTime() to t; vm.clearOpNotice() } }
         }
 
-        // ---------------- 几何基准 ----------------
-        val boxSz = gDp(168f)                       // 中央骰盒
+        // ---------------- 几何基准（圈层：骰盒 → 牌河 → 牌墙 → 侧家手牌） ----------------
+        val bigW = u * 46f                          // 手牌宽（视频比例）
+        val bigH = bigW * 128f / 89f
+        val handY = H - bigH - u * 10f
+        val tu = u * 0.52f                          // 桌牌基准（河牌）：立 26.5x39.5 / 躺 33.3 方
+        val mu = u * 0.5f                           // 副露小牌基准：立 20.4x30.4 / 躺 25.6 方
+        // 牌墙方块（墙沿此方框三边）
+        val sqW = sqWu * u
+        val sqL = (W - sqW) / 2
+        val sqR = sqL + sqW
+        val sqT = u * 58f
+        val sqB = handY - u * 14f
+        // 中央骰盒
+        val boxW = u * 150f
+        val boxH = u * 126f
         val boxCx = W / 2
-        val boxCy = (H - gDp(108f)) / 2 + gDp(4f)
-        val boxL = boxCx - boxSz / 2
-        val boxT = boxCy - boxSz / 2
-        val bigW = gDp(64f)                         // 手牌宽
-        val bigH = bigW * 1.38f
-        val handY = H - bigH - gDp(16f)
-        val rvW = gDp(55f)                          // 牌河横躺宽
-        val rvH = gDp(40f)                          // 牌河横躺高
-        val rvPW = gDp(40f)                         // 牌河立牌宽
-        val rvPH = gDp(55f)
-        val meldW = gDp(44f)
-        val meldH = meldW * 1.38f
+        val boxCy = (sqT + sqB) / 2 - u * 6f
+        val boxL = boxCx - boxW / 2
+        val boxT = boxCy - boxH / 2
+        val boxR = boxL + boxW
+        val boxB = boxT + boxH
+        // 牌河步进（6 张一行）
+        val rvUpW = tu * 51f; val rvUpH = tu * 76f          // 立牌盒
+        val rvLy = tu * 64f                                  // 躺牌方盒
+        val rvStepX = rvUpW + u * 2.5f
+        val rvStepY = rvUpH + u * 2.5f
+        val rvStepLy = rvLy + u * 2.5f
 
         /** 绝对定位（BoxScope 接收者，允许 content 内使用 align） */
         @Composable
@@ -389,61 +407,95 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             ) { content() }
         }
 
-        // ---------------- 牌墙（双层黑背，随发牌进度出现） ----------------
+        // ---------------- 牌墙（深背+白身双层，沿方框上/左/右三边，随发牌进度出现） ----------------
         @Composable
         fun Walls() {
             val wallN = 17
-            val wt = gDp(30f); val ht = gDp(22f)
-            // 上墙：两层（后层上移+暗）
-            val topY = boxT - gDp(56f)
+            val wsTop = u * 34f                       // 上墙墩宽（横向）
+            val wsSide = (sqB - sqT - u * 10f) / wallN // 侧墙墩距（纵向）
+            // 上墙（双层墩：深背在上、白身在下）
+            val x0 = boxCx - wsTop * wallN / 2
             repeat(wallN) { i ->
                 val p = ((deal.value * 17f - i) / 2f).coerceIn(0f, 1f)
                 if (p > 0f) {
-                    val x = boxCx - wt * wallN / 2 + wt * i
-                    Place(x, topY - gDp(13f)) {
-                        TenWallTile(u, 0f, alpha = 0.8f * p,
-                            modifier = Modifier.graphicsLayer { scaleX = 0.94f; scaleY = 0.94f })
-                    }
-                    Place(x, topY) { TenWallTile(u, 0f, alpha = p) }
+                    Place(x0 + wsTop * i, sqT) { TenWallTile(wsTop, 0f, alpha = p) }
                 }
             }
-            // 左墙（rot270: 白缘朝右=朝中央）
-            val lX = boxL - gDp(56f)
+            // 左墙（深面朝右=朝中央）
             repeat(wallN) { i ->
                 val p = ((deal.value * 17f - i) / 2f).coerceIn(0f, 1f)
                 if (p > 0f) {
-                    val y = boxCy - ht * wallN / 2 + ht * i
-                    Place(lX - gDp(13f), y) { TenWallTile(u, 270f, alpha = 0.8f * p) }
-                    Place(lX, y) { TenWallTile(u, 270f, alpha = p) }
+                    Place(sqL + u * 3f, sqT + u * 5f + wsSide * i) { TenWallTile(wsSide, 270f, alpha = p) }
                 }
             }
-            // 右墙（rot90: 白缘朝左=朝中央）
-            val rX = boxL + boxSz + gDp(56f)
+            // 右墙（深面朝左=朝中央）
             repeat(wallN) { i ->
                 val p = ((deal.value * 17f - i) / 2f).coerceIn(0f, 1f)
                 if (p > 0f) {
-                    val y = boxCy - ht * wallN / 2 + ht * i
-                    Place(rX + gDp(13f), y) { TenWallTile(u, 90f, alpha = 0.8f * p) }
-                    Place(rX, y) { TenWallTile(u, 90f, alpha = p) }
+                    Place(sqR - u * 3f - wsSide * 0.62f, sqT + u * 5f + wsSide * i) { TenWallTile(wsSide, 90f, alpha = p) }
                 }
             }
-            // 王牌/宝牌指示区（右墙上端）：3 张黑背 + 癞子指示牌面朝上横置
-            val dy = boxT + gDp(6f)
-            Place(rX + gDp(15f), dy) { TenWallTile(u, 90f) }
-            Place(rX + gDp(15f), dy + ht) { TenWallTile(u, 90f) }
+            // 王牌/宝牌指示区（右墙上端外侧）：2 张深背 + 癞子指示牌面朝上
+            val dy = sqT + u * 2f
+            Place(sqR + u * 6f, dy) { TenWallTile(u * 30f, 90f) }
+            Place(sqR + u * 6f, dy + u * 30f) { TenWallTile(u * 30f, 90f) }
             if (snap.laiziCode >= 0) {
-                Place(rX + gDp(17f), dy - gDp(2f)) {
-                    TenRiverTile(snap.laiziCode, 2, u, alpha = ((deal.value - 0.6f) * 3f).coerceIn(0f, 1f), scale = 0.42f)
+                Place(sqR + u * 8f, dy + u * 62f) {
+                    TenRiverTile(snap.laiziCode, 2, tu, alpha = ((deal.value - 0.6f) * 3f).coerceIn(0f, 1f), scale = 0.55f)
                 }
             }
         }
         Walls()
 
-        // ---------------- 中央骰盒（黑垫+四角风位+LED+四家点数+骰子仪式） ----------------
+        // ---------------- 侧家/上家手牌（最外层：白色素背列，视频样式） ----------------
+        @Composable
+        fun SideHands() {
+            // 左家：竖列（横躺白背 26x17u）
+            val lw = u * 26f; val lh = u * 17f; val lPitch = lh + u * 1.2f
+            val lCount = left.handCount.coerceIn(0, 14)
+            val lDrawn = lCount % 3 == 2 && lCount > 0       // 14 张 → 摸牌分离
+            val colH = lPitch * lCount + if (lDrawn) u * 7f else 0f
+            var ly = boxCy - colH / 2
+            repeat(lCount) { i ->
+                val gap = if (lDrawn && i == lCount - 1) u * 7f else 0.dp
+                Place(sqL - lw - u * 5f, ly + gap) {
+                    SideHandBack(lw, lh, alpha = if (dealDone) 1f else deal.value)
+                }
+                ly += lPitch
+            }
+            // 右家：竖列
+            val rCount = right.handCount.coerceIn(0, 14)
+            val rDrawn = rCount % 3 == 2 && rCount > 0
+            val colH2 = lPitch * rCount + if (rDrawn) u * 7f else 0f
+            var ry = boxCy - colH2 / 2
+            repeat(rCount) { i ->
+                val gap = if (rDrawn && i == rCount - 1) u * 7f else 0.dp
+                Place(sqR + u * 5f, ry + gap) {
+                    SideHandBack(lw, lh, alpha = if (dealDone) 1f else deal.value)
+                }
+                ry += lPitch
+            }
+            // 上家：横排（白背 22x15u，居中于骰盒上方、墙外）
+            val tw = u * 22f; val th = u * 15f; val tPitch = tw + u * 1.5f
+            val tCount = top.handCount.coerceIn(0, 14)
+            val tDrawn = tCount % 3 == 2 && tCount > 0
+            val rowW = tPitch * tCount + if (tDrawn) u * 7f else 0f
+            var tx = boxCx - rowW / 2
+            repeat(tCount) { i ->
+                val gap = if (tDrawn && i == tCount - 1) u * 7f else 0.dp
+                Place(tx + gap, sqT - u * 24f) {
+                    SideHandBack(tw, th, alpha = if (dealDone) 1f else deal.value)
+                }
+                tx += tPitch
+            }
+        }
+        SideHands()
+
+        // ---------------- 中央骰盒（黑垫+四角风位+LED+四边彩带记分+骰子仪式） ----------------
         @Composable
         fun CenterBox() {
             Place(boxL, boxT) {
-                Box(Modifier.size(boxSz, boxSz)) {
+                Box(Modifier.size(boxW, boxH)) {
                     // 黑垫
                     Canvas(Modifier.matchParentSize()) {
                         val r = size.width * 0.09f
@@ -453,36 +505,27 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                             Offset(size.width * 0.03f, size.height * 0.03f),
                             Size(size.width * 0.94f, size.height * 0.94f), CornerRadius(r, r)
                         )
-                        // 内八角屏区
-                        drawRoundRect(
-                            Color(0xFF04050A),
-                            Offset(size.width * 0.22f, size.height * 0.24f),
-                            Size(size.width * 0.56f, size.height * 0.42f),
-                            CornerRadius(size.width * 0.10f)
-                        )
                     }
                     // 四角风位牌（圆风=东→红）
                     val roundWind = (snap.round / 4) % 4
                     val plaque = gDp(24f)
-                    val seatsWind = listOf(0, 1, 2, 3) // 下右上左 的座风序号（相对庄家）
                     val posWind = arrayOf(
-                        (0 - (snap.dealer - mySeat) + 4) % 4,     // 我
-                        (1 - (snap.dealer - mySeat) + 4) % 4,     // 右
-                        (2 - (snap.dealer - mySeat) + 4) % 4,     // 上
-                        (3 - (snap.dealer - mySeat) + 4) % 4      // 左
+                        (0 - (snap.dealer - mySeat) + 4) % 4,     // 我（左下）
+                        (1 - (snap.dealer - mySeat) + 4) % 4,     // 右（右下）
+                        (2 - (snap.dealer - mySeat) + 4) % 4,     // 上（右上）
+                        (3 - (snap.dealer - mySeat) + 4) % 4      // 左（左上）
                     )
-                    // 屏幕角位 → (x, y, 字转角)
                     val corners = listOf(
-                        Triple(0f, 1f, 0f),      // 左下=東位
-                        Triple(1f, 1f, -90f),    // 右下=南位
-                        Triple(1f, 0f, 180f),    // 右上=西位
-                        Triple(0f, 0f, 90f)      // 左上=北位
+                        Triple(0f, 1f, 0),      // 左下=我
+                        Triple(1f, 1f, 1),      // 右下=右
+                        Triple(1f, 0f, 2),      // 右上=上
+                        Triple(0f, 0f, 3)       // 左上=左
                     )
-                    corners.forEachIndexed { ci, (fx, fy, rot) ->
-                        val windIdx = when (ci) { 0 -> posWind[0]; 1 -> posWind[1]; 2 -> posWind[2]; else -> posWind[3] }
+                    corners.forEach { (fx, fy, seatK) ->
+                        val windIdx = posWind[seatK]
                         val isRed = windIdx == roundWind
-                        val px = boxSz * fx + (if (fx == 0f) gDp(5f) else -plaque - gDp(5f))
-                        val py = boxSz * fy + (if (fy == 0f) gDp(5f) else -plaque - gDp(5f))
+                        val px = boxW * fx + (if (fx == 0f) gDp(5f) else -plaque - gDp(5f))
+                        val py = boxH * fy + (if (fy == 0f) gDp(5f) else -plaque - gDp(5f))
                         Box(
                             Modifier
                                 .offset(x = px, y = py)
@@ -496,51 +539,69 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                                 WIND_KANJI[windIdx],
                                 color = if (isRed) Color(0xFF14100E) else Color(0xFF707888),
                                 fontSize = with(density) { (plaque.value * 0.56f).sp },
-                                fontWeight = FontWeight.Black,
-                                modifier = Modifier.graphicsLayer { rotationZ = rot }
+                                fontWeight = FontWeight.Black
                             )
                         }
                     }
-                    // LED 读秒
+                    // LED 八角屏读秒
                     if (diceRoll.value == 0f || deal.value > 0f) {
-                        Box(Modifier.align(Alignment.Center).offset(y = -gDp(6f))) {
-                            LedNumber(turnSec.coerceIn(0, 99), gDp(40f))
+                        Box(Modifier.align(Alignment.Center).offset(y = -gDp(8f))) {
+                            Canvas(Modifier.matchParentSize()) {
+                                val w = size.width; val h = size.height
+                                val c = w * 0.26f
+                                val oct = Path().apply {
+                                    moveTo(c, 0f); lineTo(w - c, 0f)
+                                    lineTo(w, h * 0.28f); lineTo(w, h * 0.72f)
+                                    lineTo(w - c, h); lineTo(c, h)
+                                    lineTo(0f, h * 0.72f); lineTo(0f, h * 0.28f)
+                                    close()
+                                }
+                                drawPath(oct, Color(0xFF04050A))
+                                drawPath(oct, Color(0xFF232B3A), style = Stroke(1.5f))
+                            }
+                            Box(Modifier.size(gDp(86f), gDp(54f)), contentAlignment = Alignment.Center) {
+                                LedNumber(turnSec.coerceIn(0, 99), gDp(34f))
+                            }
                         }
                     }
-                    // 四家点数：下(我)/左/上/右 —— 行动家槽位蓝彩带
+                    // 四边彩带记分：下(我)/右/上/左 —— 行动家槽位蓝彩带（视频样式）
                     val active = (snap.turn - mySeat + 4) % 4   // 0=我 1=右 2=上 3=左
-                    val scoreFs = with(density) { gDp(15f).toSp() }
+                    val scoreFs = with(density) { gDp(13f).toSp() }
                     @Composable
-                    fun ScoreSlot(value: Int, isActive: Boolean, rot: Float, align: Alignment, offX: Dp = 0.dp, offY: Dp = 0.dp) {
+                    fun ScoreRibbon(value: Int, isActive: Boolean, side: Int) {
+                        val rot = when (side) { 1 -> 90f; 3 -> -90f; else -> 0f }
+                        val align = when (side) {
+                            0 -> Alignment.BottomCenter; 2 -> Alignment.TopCenter
+                            1 -> Alignment.CenterEnd; else -> Alignment.CenterStart
+                        }
+                        val off = when (side) {
+                            0 -> Dp(0f) to -gDp(13f); 2 -> Dp(0f) to gDp(13f)
+                            1 -> -gDp(15f) to Dp(0f); else -> gDp(15f) to Dp(0f)
+                        }
                         Box(
                             Modifier
                                 .align(align)
-                                .offset(x = offX, y = offY)
+                                .offset(x = off.first, y = off.second)
                                 .graphicsLayer { rotationZ = rot }
                         ) {
                             if (isActive) {
                                 Box(
                                     Modifier
-                                        .clip(RoundedCornerShape(gDp(5f)))
+                                        .clip(RoundedCornerShape(gDp(4f)))
                                         .background(Brush.horizontalGradient(listOf(Color(0xFF1857C4), Color(0xFF3D8DF0))))
                                         .padding(horizontal = gDp(6f), vertical = gDp(1f))
                                 ) {
                                     Text("$value", color = Color.White, fontSize = scoreFs, fontWeight = FontWeight.Bold)
                                 }
                             } else {
-                                Text(
-                                    "$value", color = Color(0xFFE8B33B), fontSize = scoreFs,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.graphicsLayer { }
-                                )
+                                Text("$value", color = Color(0xFFE8B33B), fontSize = scoreFs, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
-                    val pad = gDp(30f)
-                    ScoreSlot(scores.getOrElse(mySeat.coerceIn(0, 3)) { 0 }, active == 0, 0f, Alignment.BottomCenter, offY = -pad * 0.4f)
-                    ScoreSlot(scores.getOrElse(left.seat.coerceIn(0, 3)) { 0 }, active == 3, -90f, Alignment.CenterStart, offX = pad * 0.2f)
-                    ScoreSlot(scores.getOrElse(right.seat.coerceIn(0, 3)) { 0 }, active == 1, 90f, Alignment.CenterEnd, offX = -pad * 0.2f)
-                    ScoreSlot(scores.getOrElse(top.seat.coerceIn(0, 3)) { 0 }, active == 2, 0f, Alignment.TopCenter, offY = pad * 0.55f)
+                    ScoreRibbon(scores.getOrElse(mySeat.coerceIn(0, 3)) { 0 }, active == 0, 0)
+                    ScoreRibbon(scores.getOrElse(right.seat.coerceIn(0, 3)) { 0 }, active == 1, 1)
+                    ScoreRibbon(scores.getOrElse(top.seat.coerceIn(0, 3)) { 0 }, active == 2, 2)
+                    ScoreRibbon(scores.getOrElse(left.seat.coerceIn(0, 3)) { 0 }, active == 3, 3)
                     // 掷骰仪式：骰子出现在盒中央
                     if (diceRoll.value > 0f && deal.value < 1f) {
                         val diceAlpha = (1f - deal.value * 3f).coerceIn(0f, 1f)
@@ -561,50 +622,52 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         }
         CenterBox()
 
-        // ---------------- 四家牌河（6张一行；刚出的牌立起；我可鸣→青蓝高亮） ----------------
+        // ---------------- 四家牌河（内圈紧贴骰盒；6张一行；最新一张立起；可鸣青蓝高亮） ----------------
         val canClaim = snap.myClaims.isNotEmpty()
         val lastRiverSeat = snap.lastDiscardSeat
 
-        /** 生成某家牌河布局：横向(下/上) 9张一行，纵向(右/左) 3张一列 */
         @Composable
         fun River(seatIdx: Int, tiles: List<MjTile>) {
             if (tiles.isEmpty()) return
             val dir = seatIdx               // 0=我 1=右 2=上 3=左
             val horizontal = dir == 0 || dir == 2
-            val perRow = if (horizontal) 9 else 3
-            val stepMain = (if (horizontal) rvW else rvPH) + gDp(8f)
-            val stepRow = (if (horizontal) rvH else rvPW) + gDp(8f)
+            val perRow = 6
             tiles.forEachIndexed { i, t ->
+                val isLast = i == tiles.lastIndex
+                if (isLast && !dealDone) return@forEachIndexed   // 发牌中不提前亮牌
+                val highlight = isLast && canClaim && lastRiverSeat == (mySeat + seatIdx) % 4
+                val standing = isLast && !horizontal         // 左右两家最新张立起
                 val row = i / perRow
                 val k = i % perRow
-                val isLast = i == tiles.lastIndex
-                val highlight = isLast && canClaim && lastRiverSeat == (mySeat + seatIdx) % 4
-                if (isLast && !dealDone) return@forEachIndexed   // 发牌中不提前亮牌
-                if (horizontal) {
-                    // 我: 自手牌上方向盒延伸（行向上叠）；上家: 盒上方向墙延伸
-                    val x0 = if (dir == 0) boxL - gDp(24f) else boxL + boxSz + gDp(24f) - rvW
-                    val x = if (dir == 0) x0 + stepMain * k else x0 - stepMain * k
-                    val y = if (dir == 0) handY - gDp(6f) - rvH - stepRow * row
-                            else boxT - gDp(8f) - rvH - stepRow * row
-                    if (isLast) {
-                        // 刚出的牌立起（视频）
-                        Place(x + (rvW - rvPW) / 2, y - gDp(12f)) {
-                            TenStandTile(t.code, rvPW, highlight = highlight)
-                        }
-                    } else {
-                        Place(x, y) { TenRiverTile(t.code, dir, u, scale = 0.625f) }
+                if (dir == 0) {
+                    // 我：行贴盒下缘，从盒左缘向右；换行向手牌方向
+                    val x = boxL + rvStepX * k
+                    val y = boxB + u * 8f + rvStepY * row
+                    Place(x, y) { TenRiverTile(t.code, 0, tu, highlight = highlight) }
+                } else if (dir == 2) {
+                    // 上家：行贴盒上缘，从盒右缘向左；换行向墙方向
+                    val x = boxR - rvUpW - rvStepX * k
+                    val y = boxT - u * 8f - rvUpH - rvStepY * row
+                    Place(x, y) { TenRiverTile(t.code, 2, tu, highlight = highlight) }
+                } else if (dir == 1) {
+                    // 右家：列贴盒右缘，从盒底向上升；换列向右（靠墙）
+                    val x = boxR + u * 8f + (rvLy + u * 5f) * row
+                    var y = boxB
+                    for (j in 0 until i) {
+                        val hJ = if (j == tiles.lastIndex) rvUpH else rvLy
+                        y -= hJ + u * 2.5f
                     }
+                    y -= (if (standing) rvUpH else rvLy)
+                    Place(x, y) { TenRiverTile(t.code, 1, tu, highlight = highlight, standing = standing) }
                 } else {
-                    // 右家: 盒右下向上长，列往右移；左家: 盒左上向下长，列往左移
-                    val y0 = if (dir == 1) boxT + boxSz - rvPH - gDp(4f) else boxT + gDp(4f)
-                    val y = if (dir == 1) y0 - stepMain * k else y0 + stepMain * k
-                    val x = if (dir == 1) boxL + boxSz + gDp(10f) + stepRow * row
-                            else boxL - gDp(10f) - rvPW - stepRow * row
-                    if (isLast) {
-                        Place(x, y) { TenStandTile(t.code, rvPW, highlight = highlight) }
-                    } else {
-                        Place(x, y) { TenRiverTile(t.code, dir, u, scale = 0.625f) }
+                    // 左家：列贴盒左缘，从盒顶向下伸；换列向左（靠墙）
+                    val x = boxL - u * 8f - rvLy - (rvLy + u * 5f) * row
+                    var y = boxT
+                    for (j in 0 until i) {
+                        val hJ = if (j == tiles.lastIndex) rvUpH else rvLy
+                        y += hJ + u * 2.5f
                     }
+                    Place(x, y) { TenRiverTile(t.code, 3, tu, highlight = highlight, standing = standing) }
                 }
             }
         }
@@ -613,68 +676,82 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         River(2, top.river)
         River(3, left.river)
 
-        // ---------------- 四家副露（靠近各家手牌位；供牌侧翻） ----------------
+        // ---------------- 我方副露占宽（供手牌行让位计算） ----------------
+        val meldsWu = run {   // 设计单位宽
+            var w = 0f
+            me.melds.forEach { m ->
+                val claimed = if (m.from >= 0) m.tiles.lastIndex else -1
+                m.tiles.forEachIndexed { ti, _ ->
+                    w += (if (ti == claimed) 60.8f else 40.8f) * 0.5f + 1.5f
+                }
+                w += 5f
+            }
+            if (w > 0f) w + 4f else 0f
+        }
+        val meldsW = meldsWu * u
+
+        // ---------------- 四家副露（靠各家手牌位；供牌侧翻） ----------------
         @Composable
         fun Melds(seatIdx: Int, s: MjSeatView) {
             if (s.melds.isEmpty()) return
             val dir = seatIdx
             when (dir) {
-                0 -> {   // 我：手牌行左端向左排
-                    val y = H - meldH - gDp(16f)
-                    var mx = (W - bigW * 13 - gDp(20f)) / 2 - gDp(10f)
+                0 -> {   // 我：手牌行左端向左排（行内从左往右铺）
+                    val slotW = mu * 40.8f
+                    val slotH = mu * 60.8f
+                    val y = handY + (bigH - slotH) / 2
+                    var mx = u * 6f
                     s.melds.forEach { m ->
                         val claimed = if (m.from >= 0) m.tiles.lastIndex else -1
                         m.tiles.forEachIndexed { ti, t ->
                             val isClaimed = ti == claimed
-                            val w = if (isClaimed) meldH else meldW
-                            mx -= w
-                            Place(mx, y + (if (isClaimed) (meldH - meldW) / 2 else 0.dp)) {
-                                TenMeldTile(t.code, 0, u, claimed = isClaimed, scale = 0.6875f)
+                            Place(mx, y + (if (isClaimed) (slotH - slotW) / 2 else 0.dp)) {
+                                TenMeldTile(t.code, 0, mu, claimed = isClaimed)
                             }
-                            if (isClaimed) mx += (meldH - meldW)
+                            mx += (if (isClaimed) slotH else slotW) + u * 1.5f
                         }
-                        mx -= gDp(8f)
+                        mx += u * 5f
                     }
                 }
-                1 -> {   // 右家：右墙内侧竖列向下
-                    var my2 = boxT - gDp(24f)
-                    val x = boxL + boxSz + gDp(108f)
+                1 -> {   // 右家：盒右内侧竖列向下
+                    val x = boxR + u * 50f
+                    var my2 = boxCy - u * 40f
                     s.melds.forEach { m ->
                         val claimed = if (m.from >= 0) m.tiles.lastIndex else -1
                         m.tiles.forEachIndexed { ti, t ->
                             val isClaimed = ti == claimed
-                            Place(x, my2) { TenMeldTile(t.code, 1, u, claimed = isClaimed, scale = 0.6875f) }
-                            my2 += (if (isClaimed) meldW else meldH) + gDp(4f)
+                            Place(x, my2) { TenMeldTile(t.code, 1, mu, claimed = isClaimed) }
+                            my2 += mu * 51.2f + u * 1.5f
                         }
-                        my2 += gDp(4f)
+                        my2 += u * 5f
                     }
                 }
-                2 -> {   // 上家：盒上方横排向右
-                    val y = boxT - gDp(112f)
-                    var mx2 = boxCx - gDp(300f)
+                2 -> {   // 上家：墙上方横排向右（上家左手侧）
+                    val y = sqT - u * 40f
+                    var mx2 = boxCx + u * 80f
                     s.melds.forEach { m ->
                         val claimed = if (m.from >= 0) m.tiles.lastIndex else -1
                         m.tiles.forEachIndexed { ti, t ->
                             val isClaimed = ti == claimed
-                            Place(mx2, y + (if (isClaimed) (meldH - meldW) / 2 else 0.dp)) {
-                                TenMeldTile(t.code, 2, u, claimed = isClaimed, scale = 0.6875f)
+                            Place(mx2, y + (if (isClaimed) (mu * 60.8f - mu * 40.8f) / 2 else 0.dp)) {
+                                TenMeldTile(t.code, 2, mu, claimed = isClaimed)
                             }
-                            mx2 += (if (isClaimed) meldH else meldW) + gDp(4f)
+                            mx2 += (if (isClaimed) mu * 60.8f else mu * 40.8f) + u * 1.5f
                         }
-                        mx2 += gDp(8f)
+                        mx2 += u * 5f
                     }
                 }
-                else -> { // 左家：左墙内侧竖列向下
-                    var my3 = boxT - gDp(24f)
-                    val x = boxL - gDp(108f) - meldW
+                else -> { // 左家：盒左内侧竖列向下
+                    val x = boxL - u * 50f - mu * 51.2f
+                    var my3 = boxCy - u * 40f
                     s.melds.forEach { m ->
                         val claimed = if (m.from >= 0) m.tiles.lastIndex else -1
                         m.tiles.forEachIndexed { ti, t ->
                             val isClaimed = ti == claimed
-                            Place(x, my3) { TenMeldTile(t.code, 3, u, claimed = isClaimed, scale = 0.6875f) }
-                            my3 += (if (isClaimed) meldW else meldH) + gDp(4f)
+                            Place(x, my3) { TenMeldTile(t.code, 3, mu, claimed = isClaimed) }
+                            my3 += mu * 51.2f + u * 1.5f
                         }
-                        my3 += gDp(4f)
+                        my3 += u * 5f
                     }
                 }
             }
@@ -717,7 +794,6 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                             .padding(vertical = gDp(10f)),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        // 灰标签
                         VText("対局中", Color(0xFF8A8F9C), labelFs, maxChars = 3, fontWeight = FontWeight.Medium)
                         Spacer(Modifier.height(gDp(8f)))
                         VText(s.name, Color(0xFFE3B94F), nameFs, maxChars = 5)
@@ -886,20 +962,22 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             }
         }
 
-        // ================= 我方手牌（整行居中；摸牌左端立起隔开——视频样式） =================
+        // ================= 我方手牌（居中于副露右侧；摸牌左端立起隔开——视频样式） =================
         val hand = me.hand
         val drawnId = snap.drawnTileId
         val normalHand = hand.filter { it.id != drawnId }
         val drawnTile = hand.firstOrNull { it.id == drawnId }
-        val drawnGap = gDp(18f)
+        val drawnGap = u * 14f
         val handRowW = bigW * normalHand.size + (if (drawnTile != null) drawnGap + bigW else 0.dp)
-        val xStart = (W - handRowW) / 2
+        val zoneL = u * 6f + meldsW
+        val zoneR = W - u * 6f
+        val xStart = zoneL + (zoneR - zoneL - handRowW) / 2
 
         @Composable
         fun HandTile(idx: Int, x: Dp, t: MjTile, isDrawn: Boolean) {
             val raised = t.id in selected
-            val baseY = if (isDrawn) handY - gDp(12f) else handY
-            Place(x, if (raised) baseY - gDp(16f) else baseY) {
+            val baseY = if (isDrawn) handY - u * 10f else handY
+            Place(x, if (raised) baseY - u * 14f else baseY) {
                 TenStandTile(
                     t.code, bigW,
                     modifier = Modifier
@@ -988,7 +1066,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                                         horizontalArrangement = Arrangement.spacedBy(gDp(2f))
                                     ) {
                                         (opt.chiMid - 1..opt.chiMid + 1).forEach { c ->
-                                            TenStandTile(c, gDp(17f))
+                                            TenStandTile(c, gDp(15f))
                                         }
                                     }
                                     Spacer(Modifier.height(gDp(3f)))
