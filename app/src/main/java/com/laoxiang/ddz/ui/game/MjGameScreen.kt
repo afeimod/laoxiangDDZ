@@ -2,6 +2,10 @@ package com.laoxiang.ddz.ui.game
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -21,6 +25,8 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -186,6 +192,55 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             ) { content() }
         }
 
+        /** 新牌飞入：牌河每张新牌从出牌者方向飞入落位（key=牌 id，物理牌唯一 → 每张只飞一次） */
+        @Composable
+        fun FlyIn(dir: Int, animKey: Any, content: @Composable () -> Unit) {
+            val p = remember(animKey) { Animatable(0f) }
+            LaunchedEffect(animKey) { p.animateTo(1f, tween(230, easing = LinearEasing)) }
+            Box(
+                Modifier.graphicsLayer {
+                    val inv = 1f - p.value
+                    translationX = when (dir) {
+                        1 -> W.toPx() * 0.14f * inv
+                        3 -> -W.toPx() * 0.14f * inv
+                        else -> 0f
+                    }
+                    translationY = when (dir) {
+                        0 -> H.toPx() * 0.16f * inv
+                        2 -> -H.toPx() * 0.16f * inv
+                        else -> 0f
+                    }
+                    alpha = 0.35f + 0.65f * p.value
+                }
+            ) { content() }
+        }
+
+        /** 牌墙摞（未抓的牌）：两层横躺牌背叠成一摞，四角各一摞位，随剩余张数递减 */
+        @Composable
+        fun WallStack(x: Dp, y: Dp, appear: Float) {
+            Place(x, y) {
+                Box(Modifier.size(g(34f), g(44f))) {
+                    Image(
+                        painter = painterResource(R.drawable.mjcc1),
+                        contentDescription = null,
+                        contentScale = ContentScale.FillBounds,
+                        modifier = Modifier
+                            .offset(y = g(10f))
+                            .size(g(34f), g(34f))
+                            .graphicsLayer { alpha = 0.72f * appear }
+                    )
+                    Image(
+                        painter = painterResource(R.drawable.mjcc1),
+                        contentDescription = "牌墙",
+                        contentScale = ContentScale.FillBounds,
+                        modifier = Modifier
+                            .size(g(34f), g(34f))
+                            .graphicsLayer { alpha = appear }
+                    )
+                }
+            }
+        }
+
         /** APK DrawFlatAvatar 1:1 玩家信息：头像98x97+庄标39x38右下+名字 g(26)白字+徽章 */
         @Composable
         fun MjApkCard(s: MjSeatView, pos: Int) {
@@ -299,6 +354,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         }
 
         val mySeat by vm.mySeat.collectAsState()
+        val turnWindow by vm.turnWindow.collectAsState()
         val seats = snap.seats
         val me = seats[mySeat.coerceIn(0, 3)]
         val right = seats[(mySeat + 1) % 4]
@@ -381,6 +437,20 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         }
         LaunchedEffect(Unit) {
             vm.opNotice.collect { t -> if (t != null) { toast = System.nanoTime() to t; vm.clearOpNotice() } }
+        }
+
+        // ================= 牌墙摞（未抓的牌，画在牌河/手牌之下） =================
+        // 四角各一摞位（每摞位最多 3 摞×2 层），随 wallCount 线性递减；发牌动画从这里起飞
+        run {
+            val appear = 0.35f + 0.65f * deal.value.coerceIn(0f, 1f)
+            val total = (snap.wallCount * 12 / 84).coerceIn(0, 12)
+            // 摞位（设计坐标）：左列 x=200/238/276（避开剩余张数文字），右列 x=446/486/526；上排 y=126，下排 y=286
+            val xs = listOf(200f, 238f, 276f, 446f, 486f, 526f)
+            for (k in 0 until total) {
+                val topRow = k % 2 == 0
+                val col = (k / 2) % 3 + if (k % 4 >= 2) 3 else 0
+                WallStack(fx(xs[col]), fy(if (topRow) 126f else 286f), appear)
+            }
         }
 
         // ================= 顶部工具条（模式/癞子/余牌/离桌） =================
@@ -467,9 +537,56 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 .offset(x = -g(85f), y = g(75f))
         )
 
+        // ================= 中间计时器（我的决策倒计时，压在罗盘中心） =================
+        val win = turnWindow
+        if (win != null && deal.value >= 1f && snap.result == null) {
+            var nowMs by remember(win.endAt) { mutableStateOf(System.currentTimeMillis()) }
+            LaunchedEffect(win.endAt) {
+                while (System.currentTimeMillis() < win.endAt) {
+                    nowMs = System.currentTimeMillis(); delay(200)
+                }
+                nowMs = win.endAt
+            }
+            val remainMs = (win.endAt - nowMs).coerceAtLeast(0L)
+            if (remainMs > 0L) {
+                val urgent = remainMs <= 5000L
+                val pulse = rememberInfiniteTransition().animateFloat(
+                    initialValue = 0f, targetValue = 1f,
+                    animationSpec = infiniteRepeatable(tween(450, easing = LinearEasing), RepeatMode.Reverse)
+                ).value
+                Box(
+                    Modifier
+                        .align(Alignment.Center)
+                        .size(g(58f))
+                        .graphicsLayer {
+                            val s = if (urgent) 1f + 0.05f * pulse else 1f
+                            scaleX = s; scaleY = s
+                        }
+                ) {
+                    Canvas(Modifier.fillMaxSize()) {
+                        drawCircle(Color(0xE60D201B))
+                        drawArc(
+                            color = if (urgent) Color(0xFFFF5A48) else Color(0xFFFFD54F),
+                            startAngle = -90f,
+                            sweepAngle = 360f * (remainMs.toFloat() / win.totalMs.toFloat()),
+                            useCenter = false,
+                            style = Stroke(3.dp.toPx(), cap = StrokeCap.Round)
+                        )
+                    }
+                    Text(
+                        "${(remainMs + 999) / 1000}",
+                        color = if (urgent) Color(0xFFFF8A80) else Color(0xFFFFE082),
+                        fontSize = with(density) { g(26f).toSp() },
+                        fontWeight = FontWeight.Black,
+                        modifier = Modifier.align(Alignment.Center)
+                    )
+                }
+            }
+        }
+
         // ================= 开局掷骰子（点击触发，罗盘上方居中） =================
         // 待点击：骰子静置 +「点击掷骰子」提示；点击后 1s 变面+旋转+弹跳 → 定格 0.75s → 发牌时淡出
-        if (deal.value < 1f && (!diceTapped || diceRoll.value > 0f)) {
+        if (deal.value < 1f) {
             val diceAlpha = (1f - deal.value * 3f).coerceIn(0f, 1f)
             if (diceAlpha > 0.01f) {
                 val rolling = diceTapped && diceRoll.value < 1f
@@ -477,21 +594,33 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
                         .align(Alignment.Center)
-                        .offset(y = -plateSz / 2 - g(58f))
-                        .graphicsLayer { alpha = diceAlpha }
+                        .offset(y = -plateSz / 2 - g(70f))
+                        .graphicsLayer {
+                            alpha = diceAlpha
+                            // 掷骰抛掷弧线：骰子从手牌方向抛向罗盘（前 70% 行程），伴 1.45x→1 缩放
+                            val tp = (diceRoll.value * 1.4f).coerceIn(0f, 1f)
+                            translationY = H.toPx() * 0.22f * (1f - tp)
+                            val s = 1f + 0.45f * (1f - tp)
+                            scaleX = s; scaleY = s
+                        }
                         .clickable(enabled = !diceTapped) { diceTapped = true }
                 ) {
                     Row {
-                        DiceDie(if (diceTapped) dicePair[0] else diceShown[0], rolling, diceRoll.value, g(52f))
-                        Spacer(Modifier.width(g(18f)))
-                        DiceDie(if (diceTapped) dicePair[1] else diceShown[1], rolling, diceRoll.value, g(52f))
+                        DiceDie(if (diceTapped) dicePair[0] else diceShown[0], rolling, diceRoll.value, g(64f))
+                        Spacer(Modifier.width(g(20f)))
+                        DiceDie(if (diceTapped) dicePair[1] else diceShown[1], rolling, diceRoll.value, g(64f))
                     }
                     if (!diceTapped) {
                         Spacer(Modifier.height(g(10f)))
+                        val hintAlpha = rememberInfiniteTransition().animateFloat(
+                            initialValue = 0.45f, targetValue = 1f,
+                            animationSpec = infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse)
+                        ).value
                         Text(
                             "点击掷骰子",
                             color = Color(0xFFFFE082), fontSize = with(density) { g(22f).toSp() },
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.graphicsLayer { alpha = hintAlpha }
                         )
                     }
                 }
@@ -511,6 +640,10 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                         alpha = 0.25f + 0.75f * p
                         val s = 0.7f + 0.3f * p
                         scaleX = s; scaleY = s
+                        // 从右上/右下牌摞飞入落位
+                        val srcY = fy(if ((idx / 4) % 2 == 0) 148f else 286f)
+                        translationX = (fx(500f) - fx(702f)).toPx() * (1f - p)
+                        translationY = (srcY - fy(80f) - g(22f) * idx).toPx() * (1f - p)
                     }
                 ) { MjBackTile(1, u) }
             }
@@ -553,6 +686,10 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                         alpha = 0.25f + 0.75f * p
                         val s = 0.7f + 0.3f * p
                         scaleX = s; scaleY = s
+                        // 从左上/右上牌摞飞入落位
+                        val srcX = fx(if ((idx / 4) % 2 == 0) 263f else 507f)
+                        translationX = (srcX - fx(200f) - g(32f) * idx).toPx() * (1f - p)
+                        translationY = (fy(148f) - fy(78f)).toPx() * (1f - p)
                     }
                 ) { MjBackTile(2, u) }
             }
@@ -625,6 +762,10 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                             alpha = 0.25f + 0.75f * p
                             val s = 0.7f + 0.3f * p
                             scaleX = s; scaleY = s
+                            // 从左上/左下牌摞飞入落位
+                            val srcY = fy(if ((idx / 4) % 2 == 0) 148f else 286f)
+                            translationX = (fx(263f) - fx(86f)).toPx() * (1f - p)
+                            translationY = (srcY - handTop - g(22f) * idx).toPx() * (1f - p)
                         }
                     ) { MjBackTile(3, u) }
                 }
@@ -652,7 +793,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 } else if (i != 0) {
                     x += stepX
                 }
-                Place(x, y) { MjTableTile(t.code, 0, u) }
+                Place(x, y) { FlyIn(0, t.id) { MjTableTile(t.code, 0, u) } }
             }
         }
         // 对家牌河：11/9/7 金字塔（镜像），最右起步向左，行距下移
@@ -674,7 +815,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 } else if (i != 0) {
                     x -= stepX
                 }
-                Place(x, y) { MjTableTile(t.code, 2, u) }
+                Place(x, y) { FlyIn(2, t.id) { MjTableTile(t.code, 2, u) } }
             }
         }
         // 左家牌河：竖列横躺牌（APK：步距40向下，列宽 9/7/5/3/1 递减，列距64右移）
@@ -683,7 +824,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             Place(
                 fx(133f) + g(64f) * col,
                 fy(110f) + g(40f) * (col + r)
-            ) { MjTableTile(t.code, 3, u) }
+            ) { FlyIn(3, t.id) { MjTableTile(t.code, 3, u) } }
         }
         // 右家牌河：竖列横躺牌（步距40向上，列宽 9/7/5/3/1，列距64左移）
         // ⚠ APK DrawFlatGived 对右家是【倒序绘制】（从最后一张往前画）：
@@ -694,7 +835,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             Place(
                 fx(628f) - g(64f) * rc,
                 fy(315f) - g(40f) * (rc + rr)
-            ) { MjTableTile(right.river[ri].code, 1, u) }
+            ) { FlyIn(1, right.river[ri].id) { MjTableTile(right.river[ri].code, 1, u) } }
         }
 
         // ================= 我方副露（DrawFlatPS，APK 中晚于牌河绘制） =================
@@ -748,8 +889,11 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                                 1f - (1f - xx) * (1f - xx) * (1f - xx)
                             }
                             if (e < 1f) {
-                                translationX = -(idx - 6.5f) * bigW.toPx() * (1f - e)
-                                translationY = -(H.toPx() * 0.30f) * (1f - e)
+                                // 从下方左/右牌摞起飞（与牌墙摞同源，一摞一摞发到手）
+                                val srcX = fx(if ((idx / 4) % 2 == 0) 263f else 507f)
+                                val srcY = fy(308f)
+                                translationX = (srcX - xStart - bigW * idx).toPx() * (1f - e)
+                                translationY = (srcY - yHand).toPx() * (1f - e)
                                 val s = 0.5f + 0.5f * e
                                 scaleX = s; scaleY = s
                                 alpha = e

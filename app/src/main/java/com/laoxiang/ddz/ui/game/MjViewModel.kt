@@ -41,6 +41,9 @@ sealed class MjFx {
     object GameOver : MjFx()
 }
 
+/** 决策倒计时窗口（UI 中间计时器）：endAt=截止时刻 totalMs=窗口总长 */
+data class MjTurnWindow(val endAt: Long, val totalMs: Long)
+
 /**
  * 麻将视图模型：单机 vs 三档 AI，与局域网联机（HOST=房主权威 / CLIENT=回显快照）。
  * 大众 / 癞子 / 四川 三模式共用，行为差异全部收敛在引擎与 AI 内。
@@ -59,6 +62,8 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
     val opNotice = MutableStateFlow<String?>(null)
     /** 当前局模式（联机由房间决定） */
     val mjMode = MutableStateFlow(MjMode.DAZHONG)
+    /** 中间计时器：我的决策倒计时（null=隐藏） */
+    val turnWindow = MutableStateFlow<MjTurnWindow?>(null)
 
     fun clearOpNotice() { opNotice.value = null }
 
@@ -66,6 +71,12 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 开局仪式闸门：点击掷骰+发牌动画未结束前禁止任何出牌/AI 调度 */
     private var ceremonyDone = false
+
+    private fun setWindow(ms: Long) {
+        turnWindow.value = MjTurnWindow(System.currentTimeMillis() + ms, ms)
+    }
+
+    private fun clearWindow() { turnWindow.value = null }
 
     // ------------------------------------------------ 开局
 
@@ -75,6 +86,8 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
         mjMode.value = m
         selected.value = emptySet()
         cancelJobs()
+        cancelDiscardTimeout()
+        clearWindow()
         ceremonyDone = false
         val level = when (prefs.aiLevel) { 0 -> AiLevel.EASY; 2 -> AiLevel.HARD; else -> AiLevel.MEDIUM }
         val names = listOf("麻将老陈", "牌桌翠花", "巷口老王", "隔壁刘婶")
@@ -131,6 +144,7 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun publish(effects: Boolean = false) {
         snapshot.value = engine.snapshotFor(mySeat.value)
+        if (snapshot.value?.result != null) clearWindow()
         if (effects) {
             engine.events.toList().forEach { ev ->
                 when (ev) {
@@ -207,6 +221,8 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
         if (mode.value != GameMode.SINGLE) return
         if (!ceremonyDone) return   // 发牌仪式未完不调度
         val snap = snapshot.value ?: return
+        clearWindow()
+        cancelDiscardTimeout()
         when (snap.phase) {
             MjPhase.DINGQUE -> {
                 val due = engine.players.filter { it.info.isAi && engine.canDingque(it.info.seat) }
@@ -263,6 +279,7 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
                                 pump()
                             }
                         } else if (seat == mySeat.value && humanClaimTimeout == null) {
+                            setWindow(9500)
                             humanClaimTimeout = viewModelScope.launch {
                                 delay(9500)
                                 humanClaimTimeout = null
@@ -289,6 +306,20 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
                             publish(effects = true)
                             pump()
                         }
+                    } else if (snap.turn == mySeat.value) {
+                        // 我方出牌 15s 超时托管 + 中间计时器（AI 托管按 MEDIUM 选牌，含胡/杠）
+                        setWindow(15000)
+                        val wallSnap = engine.wallCount
+                        humanDiscardTimeout = viewModelScope.launch {
+                            delay(15000)
+                            humanDiscardTimeout = null
+                            if (mode.value != GameMode.SINGLE || !ceremonyDone) return@launch
+                            if (engine.canDiscardPhase(0) && engine.wallCount == wallSnap) {
+                                aiAct(0, AiLevel.MEDIUM)
+                                publish(effects = true)
+                                pump()
+                            }
+                        }
                     }
                 }
             }
@@ -297,6 +328,12 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private var humanClaimTimeout: Job? = null
+    private var humanDiscardTimeout: Job? = null
+
+    private fun cancelDiscardTimeout() {
+        humanDiscardTimeout?.cancel()
+        humanDiscardTimeout = null
+    }
 
     /** 人类定缺/换三张 15s 兜底 */
     private fun scheduleHumanSetup() {
@@ -304,6 +341,7 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
         val needDq = engine.canDingque(0)
         val needSwap = engine.canSwap(0)
         if (!needDq && !needSwap) return
+        setWindow(15000)
         setupJobs += viewModelScope.launch {
             delay(15000)
             if (needDq && engine.canDingque(0)) {
@@ -369,6 +407,7 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
                 engine.events.clear()
                 if (!engine.discard(0, ids[0])) return "不能打这张"
                 selected.value = emptySet()
+                cancelDiscardTimeout()
                 publish(effects = true)
                 pump()
             }
@@ -380,6 +419,7 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
 
     fun doClaim(opt: MjClaimOpt) {
         cancelClaimTimeout()
+        cancelDiscardTimeout()
         when (mode.value) {
             GameMode.SINGLE -> {
                 engine.events.clear()
@@ -399,6 +439,7 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
 
     fun passClaim() {
         cancelClaimTimeout()
+        cancelDiscardTimeout()
         when (mode.value) {
             GameMode.SINGLE -> {
                 engine.events.clear()
@@ -429,6 +470,7 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
                 engine.events.clear()
                 if (!engine.declareSelfHu(0)) return "无法胡牌"
                 selected.value = emptySet()
+                cancelDiscardTimeout()
                 publish(effects = true)
                 pump()
             }
@@ -449,6 +491,7 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
                 engine.events.clear()
                 val ok = if (bu) engine.declareBuGang(0, tileId) else engine.declareAnGang(0, code)
                 if (!ok) return "无法杠"
+                cancelDiscardTimeout()
                 publish(effects = true)
                 pump()
             }
@@ -580,6 +623,8 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
         }
         cancelJobs()
         cancelClaimTimeout()
+        cancelDiscardTimeout()
+        clearWindow()
         mode.value = GameMode.SINGLE
         mySeat.value = 0
         scoredRound = -1
