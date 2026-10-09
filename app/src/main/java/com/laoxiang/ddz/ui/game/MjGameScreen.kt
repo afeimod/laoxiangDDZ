@@ -178,9 +178,9 @@ private fun JapanFlag(w: Dp) {
 
 /** 卷轴小图（右上 chain 计数） */
 @Composable
-private fun ScrollIcon(size: Dp) {
-    Canvas(Modifier.size(size, size)) {
-        val w = size.width; val h = size.height
+private fun ScrollIcon(iconSz: Dp) {
+    Canvas(Modifier.size(iconSz, iconSz)) {
+        val w = size.width; val h = size.height   // DrawScope.size（像素）
         drawRoundRect(Color(0xFFE8C15C), Offset(w * 0.18f, h * 0.10f), Size(w * 0.64f, h * 0.80f), CornerRadius(w * 0.08f))
         drawLine(Color(0xFF8A6A1E), Offset(w * 0.30f, h * 0.32f), Offset(w * 0.70f, h * 0.32f), 2f)
         drawLine(Color(0xFF8A6A1E), Offset(w * 0.30f, h * 0.50f), Offset(w * 0.70f, h * 0.50f), 2f)
@@ -379,9 +379,9 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         val meldW = gDp(44f)
         val meldH = meldW * 1.38f
 
-        /** 绝对定位 */
+        /** 绝对定位（BoxScope 接收者，允许 content 内使用 align） */
         @Composable
-        fun Place(x: Dp, y: Dp, content: @Composable () -> Unit) {
+        fun Place(x: Dp, y: Dp, content: @Composable BoxScope.() -> Unit) {
             Box(
                 Modifier
                     .align(Alignment.TopStart)

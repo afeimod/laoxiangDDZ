@@ -205,3 +205,5 @@ LaoXiangDouDizhu/
 - 扑克牌 / 人物 / 牌背素材：项目提供
 - 牌桌 / 背景图：网络检索
 - 其余桌面、水印、音效处理：本项目加工
+- 麻将对局背景音乐：**"Ishikari Lore" — Kevin MacLeod (incompetech.com)**，
+  Licensed under **Creative Commons: By Attribution 4.0**（应用内大厅页脚已署名）
