@@ -376,7 +376,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         val tu = u * 0.52f                          // 桌牌基准（河牌）：立 26.5x39.5 / 躺 33.3 方
         val mu = u * 0.5f                           // 副露小牌基准：立 20.4x30.4 / 躺 25.6 方
         // 牌墙方块（墙沿此方框三边）
-        val sqW = sqWu * u
+        val sqW = u * sqWu
         val sqL = (W - sqW) / 2
         val sqR = sqL + sqW
         val sqT = u * 58f
@@ -454,7 +454,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             val lw = u * 26f; val lh = u * 17f; val lPitch = lh + u * 1.2f
             val lCount = left.handCount.coerceIn(0, 14)
             val lDrawn = lCount % 3 == 2 && lCount > 0       // 14 张 → 摸牌分离
-            val colH = lPitch * lCount + if (lDrawn) u * 7f else 0f
+            val colH = lPitch * lCount + if (lDrawn) u * 7f else 0.dp
             var ly = boxCy - colH / 2
             repeat(lCount) { i ->
                 val gap = if (lDrawn && i == lCount - 1) u * 7f else 0.dp
@@ -466,7 +466,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             // 右家：竖列
             val rCount = right.handCount.coerceIn(0, 14)
             val rDrawn = rCount % 3 == 2 && rCount > 0
-            val colH2 = lPitch * rCount + if (rDrawn) u * 7f else 0f
+            val colH2 = lPitch * rCount + if (rDrawn) u * 7f else 0.dp
             var ry = boxCy - colH2 / 2
             repeat(rCount) { i ->
                 val gap = if (rDrawn && i == rCount - 1) u * 7f else 0.dp
@@ -479,7 +479,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             val tw = u * 22f; val th = u * 15f; val tPitch = tw + u * 1.5f
             val tCount = top.handCount.coerceIn(0, 14)
             val tDrawn = tCount % 3 == 2 && tCount > 0
-            val rowW = tPitch * tCount + if (tDrawn) u * 7f else 0f
+            val rowW = tPitch * tCount + if (tDrawn) u * 7f else 0.dp
             var tx = boxCx - rowW / 2
             repeat(tCount) { i ->
                 val gap = if (tDrawn && i == tCount - 1) u * 7f else 0.dp
@@ -688,7 +688,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             }
             if (w > 0f) w + 4f else 0f
         }
-        val meldsW = meldsWu * u
+        val meldsW = u * meldsWu
 
         // ---------------- 四家副露（靠各家手牌位；供牌侧翻） ----------------
         @Composable
