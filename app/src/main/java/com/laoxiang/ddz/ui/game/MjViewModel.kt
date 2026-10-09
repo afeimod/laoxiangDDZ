@@ -64,6 +64,9 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
 
     private val engine = MjEngine()
 
+    /** 开局仪式闸门：点击掷骰+发牌动画未结束前禁止任何出牌/AI 调度 */
+    private var ceremonyDone = false
+
     // ------------------------------------------------ 开局
 
     fun start(m: MjMode) {
@@ -72,6 +75,7 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
         mjMode.value = m
         selected.value = emptySet()
         cancelJobs()
+        ceremonyDone = false
         val level = when (prefs.aiLevel) { 0 -> AiLevel.EASY; 2 -> AiLevel.HARD; else -> AiLevel.MEDIUM }
         val names = listOf("麻将老陈", "牌桌翠花", "巷口老王", "隔壁刘婶")
         val avatars = listOf(3, 6, 2, 8)
@@ -83,6 +87,18 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
         hookSetup()
         publish(effects = true)
         sound.startBgm(mahjong = true)
+        // 掷骰由 UI 点击触发；此置 12s 兔底（UI 异常未回调时自动放行，防卡开局）
+        viewModelScope.launch {
+            delay(12000)
+            ceremonyFinished()
+        }
+    }
+
+    /** UI 通知：点击掷骰 + 发牌动画已播完，开启出牌/AI 调度 */
+    fun ceremonyFinished() {
+        if (ceremonyDone) return
+        ceremonyDone = true
+        publish(effects = false)
         pump()
     }
 
@@ -189,6 +205,7 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
     /** 每次状态变化后调用：为 AI 排下行动，为人类排超时兜底 */
     private fun pump() {
         if (mode.value != GameMode.SINGLE) return
+        if (!ceremonyDone) return   // 发牌仪式未完不调度
         val snap = snapshot.value ?: return
         when (snap.phase) {
             MjPhase.DINGQUE -> {
@@ -343,6 +360,7 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
     /** 打出选中的牌（1 张） */
     fun discardSelected(): String? {
         val snap = snapshot.value ?: return "尚未开局"
+        if (mode.value == GameMode.SINGLE && !ceremonyDone) return "发牌中，请稍候"
         if (snap.phase != MjPhase.PLAYING || snap.turn != mySeat.value || !snap.awaitingDiscard) return "还没轮到你"
         val ids = selected.value.toList()
         if (ids.size != 1) return "请选择一张牌"
@@ -401,9 +419,30 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
         engine.respondClaim(seat, opt)
     }
 
+    /** 自摸胡（摸牌后待出牌状态且 myHu=true 时可点） */
+    fun selfHu(): String? {
+        val snap = snapshot.value ?: return "尚未开局"
+        if (mode.value == GameMode.SINGLE && !ceremonyDone) return "发牌中，请稍候"
+        if (!snap.myHu) return "现在还不能胡"
+        when (mode.value) {
+            GameMode.SINGLE -> {
+                engine.events.clear()
+                if (!engine.declareSelfHu(0)) return "无法胡牌"
+                selected.value = emptySet()
+                publish(effects = true)
+                pump()
+            }
+            GameMode.HOST -> NetLobby.sendMjAct("hu", emptyList(), -1)
+            GameMode.CLIENT -> NetLobby.sendMjAct("hu", emptyList(), -1)
+        }
+        selected.value = emptySet()
+        return null
+    }
+
     /** 暗杠 / 补杠（自己的回合按钮） */
     fun declareGang(code: Int, bu: Boolean, tileId: Int): String? {
         val snap = snapshot.value ?: return "尚未开局"
+        if (mode.value == GameMode.SINGLE && !ceremonyDone) return "发牌中，请稍候"
         if (snap.phase != MjPhase.PLAYING || snap.turn != mySeat.value) return "还没轮到你"
         when (mode.value) {
             GameMode.SINGLE -> {
