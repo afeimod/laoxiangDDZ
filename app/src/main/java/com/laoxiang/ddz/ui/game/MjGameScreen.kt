@@ -362,17 +362,20 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         val left = seats[(mySeat + 3) % 4]
         val selected by vm.selected.collectAsState()
 
-        // ---- 开局仪式：点击掷骰子 → 掷骰动画 → 定格 → 一摞一摞发牌 ----
-        // 以局号为键每局必重启；骰子先静置等待点击（5s 未点自动掷兔底）；
-        // 掷骰 1s（翻滚变面+旋转）→ 定格展示点数 0.75s → 发牌按摞飞入 1.2s → 通知 VM 开启调度
+        // ---- 开局仪式 v1.5.6：发牌动画立即开场，骰子并行可点，两者都完成才开局 ----
+        // 旧版把发牌排在「点击掷骰→掷1s→定格0.75s」之后，点击前手牌不可见、全桌静止，
+        // 玩家观感为"卡住直到掷骰子"；现改为：进局即见牌墙方城+发牌飞行，骰子随时可点，
+        // 全流程无死帧；4s 未点自动掷兜底。
         val deal = remember { Animatable(0f) }
         val diceRoll = remember { Animatable(0f) }
         var dicePair by remember { mutableStateOf(intArrayOf(5, 3)) }
         var diceShown by remember { mutableStateOf(intArrayOf(5, 3)) }
         var dealDone by remember { mutableStateOf(false) }
+        var diceDone by remember { mutableStateOf(false) }
         var diceTapped by remember { mutableStateOf(false) }
         LaunchedEffect(snap.round) {
             dealDone = false
+            diceDone = false
             diceTapped = false
             deal.snapTo(0f)
             diceRoll.snapTo(0f)
@@ -382,17 +385,24 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             dicePair = if (snap.dice1 in 1..6 && snap.dice2 in 1..6) intArrayOf(snap.dice1, snap.dice2)
             else intArrayOf(Random.nextInt(1, 7), Random.nextInt(1, 7))
         }
+        // 发牌：每局立即开始（不等骰子），一摞一摞飞入 + 盖牌翻开
+        LaunchedEffect(snap.round) {
+            delay(250)   // 牌墙摞先显一帧再起飞
+            deal.animateTo(1f, tween(1200, easing = LinearEasing))
+            dealDone = true
+            if (diceDone) vm.ceremonyFinished()
+        }
+        // 掷骰：点击后翻滚 1s（变面+旋转+弹跳）→ 定格 0.75s 展示点数
         LaunchedEffect(snap.round, diceTapped) {
             if (!diceTapped) return@LaunchedEffect
             diceRoll.animateTo(1f, tween(1000, easing = LinearEasing))
             delay(750)
-            deal.animateTo(1f, tween(1200, easing = LinearEasing))
-            dealDone = true
-            vm.ceremonyFinished()
+            diceDone = true
+            if (dealDone) vm.ceremonyFinished()
         }
-        // 5 秒未点击自动掷（兔底）
+        // 4 秒未点击自动掷（兜底）
         LaunchedEffect(snap.round) {
-            delay(5000)
+            delay(4000)
             diceTapped = true
         }
 
@@ -439,17 +449,30 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             vm.opNotice.collect { t -> if (t != null) { toast = System.nanoTime() to t; vm.clearOpNotice() } }
         }
 
-        // ================= 牌墙摞（未抓的牌，画在牌河/手牌之下） =================
-        // 四角各一摞位（每摞位最多 3 摞×2 层），随 wallCount 线性递减；发牌动画从这里起飞
+        // ================= 牌墙方城（未抓的牌，画在最底层） =================
+        // 环绕罗盘一圈：上排17 + 左右列各3 + 下排两段各5 = 33 摞（每摞双层两张）
+        // 从下排缺口（剩余张数文字处）开始逆时针耗尽；开局随发牌淡入，是发牌动画的起飞源
         run {
-            val appear = 0.35f + 0.65f * deal.value.coerceIn(0f, 1f)
-            val total = (snap.wallCount * 12 / 84).coerceIn(0, 12)
-            // 摞位（设计坐标）：左列 x=200/238/276（避开剩余张数文字），右列 x=446/486/526；上排 y=126，下排 y=286
-            val xs = listOf(200f, 238f, 276f, 446f, 486f, 526f)
-            for (k in 0 until total) {
-                val topRow = k % 2 == 0
-                val col = (k / 2) % 3 + if (k % 4 >= 2) 3 else 0
-                WallStack(fx(xs[col]), fy(if (topRow) 126f else 286f), appear)
+            val appear = (deal.value * 4f).coerceIn(0f, 1f)   // 开局 300ms 淡入
+            if (appear > 0.01f) {
+                val total = (snap.wallCount * 33 / 84).coerceIn(0, 33)
+                if (total > 0) {
+                    // 摞位（u 空间 34x44 每摞）：耗尽顺序=贴缺口摞最先消失
+                    val spots = ArrayList<Pair<Float, Float>>(33)
+                    // 下左段（贴缺口内→外）
+                    for (i in 4 downTo 0) spots.add(340f + i * 34f to 426f)
+                    // 左列（下→上）
+                    for (i in 2 downTo 0) spots.add(340f to 306f + i * 34f)
+                    // 上排（左→右）
+                    for (i in 0 until 17) spots.add(340f + i * 34f to 272f)
+                    // 右列（上→下）
+                    for (i in 0 until 3) spots.add(906f to 306f + i * 34f)
+                    // 下右段（贴缺口内→外）
+                    for (i in 0 until 5) spots.add(745f + i * 34f to 426f)
+                    spots.drop(33 - total).forEach { (sx, sy) ->
+                        WallStack(fx(sx / 1.6f), fy(sy / 1.5f), appear)
+                    }
+                }
             }
         }
 
@@ -526,7 +549,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                     }
             )
         }
-        // 剩余张数（APK：罗盘下方深绿粗体，W/2-85, H/2+75）
+        // 剩余张数（APK：罗盘下方深绿粗体；x 微移避让牌墙下排缺口边摞）
         Text(
             "剩余张数:${snap.wallCount}",
             color = Color(0xFF083209),
@@ -534,7 +557,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             fontWeight = FontWeight.Bold,
             modifier = Modifier
                 .align(Alignment.Center)
-                .offset(x = -g(85f), y = g(75f))
+                .offset(x = -g(72f), y = g(75f))
         )
 
         // ================= 中间计时器（我的决策倒计时，压在罗盘中心） =================
@@ -584,45 +607,37 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             }
         }
 
-        // ================= 开局掷骰子（点击触发，罗盘上方居中） =================
-        // 待点击：骰子静置 +「点击掷骰子」提示；点击后 1s 变面+旋转+弹跳 → 定格 0.75s → 发牌时淡出
-        if (deal.value < 1f) {
-            val diceAlpha = (1f - deal.value * 3f).coerceIn(0f, 1f)
-            if (diceAlpha > 0.01f) {
-                val rolling = diceTapped && diceRoll.value < 1f
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .offset(y = -plateSz / 2 - g(70f))
-                        .graphicsLayer {
-                            alpha = diceAlpha
-                            // 掷骰抛掷弧线：骰子从手牌方向抛向罗盘（前 70% 行程），伴 1.45x→1 缩放
-                            val tp = (diceRoll.value * 1.4f).coerceIn(0f, 1f)
-                            translationY = H.toPx() * 0.22f * (1f - tp)
-                            val s = 1f + 0.45f * (1f - tp)
-                            scaleX = s; scaleY = s
-                        }
-                        .clickable(enabled = !diceTapped) { diceTapped = true }
-                ) {
-                    Row {
-                        DiceDie(if (diceTapped) dicePair[0] else diceShown[0], rolling, diceRoll.value, g(64f))
-                        Spacer(Modifier.width(g(20f)))
-                        DiceDie(if (diceTapped) dicePair[1] else diceShown[1], rolling, diceRoll.value, g(64f))
-                    }
-                    if (!diceTapped) {
-                        Spacer(Modifier.height(g(10f)))
-                        val hintAlpha = rememberInfiniteTransition().animateFloat(
-                            initialValue = 0.45f, targetValue = 1f,
-                            animationSpec = infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse)
-                        ).value
-                        Text(
-                            "点击掷骰子",
-                            color = Color(0xFFFFE082), fontSize = with(density) { g(22f).toSp() },
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.graphicsLayer { alpha = hintAlpha }
-                        )
-                    }
+        // ================= 开局掷骰子（与发牌并行；点击即掷，罗盘中心） =================
+        // 仪式期间计时器未启动、罗盘空闲：骰子置罗盘中心最醒目，且不与上家牌河/牌墙叠压
+        // 待点击：骰子静置 +「点击掷骰子」呼吸提示；点击后 1s 变面+旋转+弹跳 → 定格 0.75s → 完成后淡出
+        val diceFade = remember { Animatable(1f) }
+        LaunchedEffect(diceDone) { if (diceDone) diceFade.animateTo(0f, tween(260, easing = LinearEasing)) }
+        if (diceFade.value > 0.01f) {
+            val rolling = diceTapped && diceRoll.value < 1f
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .graphicsLayer { alpha = diceFade.value }
+                    .clickable(enabled = !diceTapped) { diceTapped = true }
+            ) {
+                Row {
+                    DiceDie(if (diceTapped) dicePair[0] else diceShown[0], rolling, diceRoll.value, g(64f))
+                    Spacer(Modifier.width(g(20f)))
+                    DiceDie(if (diceTapped) dicePair[1] else diceShown[1], rolling, diceRoll.value, g(64f))
+                }
+                if (!diceTapped) {
+                    Spacer(Modifier.height(g(10f)))
+                    val hintAlpha = rememberInfiniteTransition().animateFloat(
+                        initialValue = 0.45f, targetValue = 1f,
+                        animationSpec = infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse)
+                    ).value
+                    Text(
+                        "点击掷骰子",
+                        color = Color(0xFFFFE082), fontSize = with(density) { g(22f).toSp() },
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.graphicsLayer { alpha = hintAlpha }
+                    )
                 }
             }
         }
@@ -640,10 +655,9 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                         alpha = 0.25f + 0.75f * p
                         val s = 0.7f + 0.3f * p
                         scaleX = s; scaleY = s
-                        // 从右上/右下牌摞飞入落位
-                        val srcY = fy(if ((idx / 4) % 2 == 0) 148f else 286f)
-                        translationX = (fx(500f) - fx(702f)).toPx() * (1f - p)
-                        translationY = (srcY - fy(80f) - g(22f) * idx).toPx() * (1f - p)
+                        // 从右列牌墙摞飞入落位
+                        translationX = (fx(577f) - fx(702f)).toPx() * (1f - p)
+                        translationY = (fy(243f) - fy(80f) - g(22f) * idx).toPx() * (1f - p)
                     }
                 ) { MjBackTile(1, u) }
             }
@@ -686,10 +700,9 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                         alpha = 0.25f + 0.75f * p
                         val s = 0.7f + 0.3f * p
                         scaleX = s; scaleY = s
-                        // 从左上/右上牌摞飞入落位
-                        val srcX = fx(if ((idx / 4) % 2 == 0) 263f else 507f)
-                        translationX = (srcX - fx(200f) - g(32f) * idx).toPx() * (1f - p)
-                        translationY = (fy(148f) - fy(78f)).toPx() * (1f - p)
+                        // 从上排牌墙摞飞入落位
+                        translationX = (fx(393f) - fx(200f) - g(32f) * idx).toPx() * (1f - p)
+                        translationY = (fy(196f) - fy(78f)).toPx() * (1f - p)
                     }
                 ) { MjBackTile(2, u) }
             }
@@ -762,10 +775,9 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                             alpha = 0.25f + 0.75f * p
                             val s = 0.7f + 0.3f * p
                             scaleX = s; scaleY = s
-                            // 从左上/左下牌摞飞入落位
-                            val srcY = fy(if ((idx / 4) % 2 == 0) 148f else 286f)
-                            translationX = (fx(263f) - fx(86f)).toPx() * (1f - p)
-                            translationY = (srcY - handTop - g(22f) * idx).toPx() * (1f - p)
+                            // 从左列牌墙摞飞入落位
+                            translationX = (fx(223f) - fx(86f)).toPx() * (1f - p)
+                            translationY = (fy(243f) - handTop - g(22f) * idx).toPx() * (1f - p)
                         }
                     ) { MjBackTile(3, u) }
                 }
@@ -889,9 +901,9 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                                 1f - (1f - xx) * (1f - xx) * (1f - xx)
                             }
                             if (e < 1f) {
-                                // 从下方左/右牌摞起飞（与牌墙摞同源，一摞一摞发到手）
-                                val srcX = fx(if ((idx / 4) % 2 == 0) 263f else 507f)
-                                val srcY = fy(308f)
+                                // 从下排两段牌墙摞起飞（与牌墙方城同源，一摞一摞发到手）
+                                val srcX = fx(if ((idx / 4) % 2 == 0) 266f else 519f)
+                                val srcY = fy(299f)
                                 translationX = (srcX - xStart - bigW * idx).toPx() * (1f - e)
                                 translationY = (srcY - yHand).toPx() * (1f - e)
                                 val s = 0.5f + 0.5f * e

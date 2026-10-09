@@ -7,11 +7,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -45,58 +46,18 @@ internal fun psmjRes(code: Int): Int = when (code) {
 }
 
 /**
- * psmj 面图逐张刻字内容中心（89x128 画布，bbox 中点实测）。
- * 每张牌的刻字在画布中的落位不同（cy 68~74，画布中心 64），
- * 横躺牌旋转后该偏差会变成左右偏移——逐张补偿后刻字才能全部正中白面。
- * ⚠ 本表按【当前素材包 psmj1..34】逐张重测（PIL alpha 通道墨迹 bbox）：
- *   旧表（v1.4.11 第三次复核）在筒/万字上偏差达 2~4.5u（如一筒 74.0 vs 实测 69.5），
- *   是横躺牌刻字明显不居中的主因之一，已全部替换为本实测值。
+ * 桌牌预合成贴图（v1.5.6）：mjtab_{code}_{dir}.png = 牌体 + 刻字一次性烘焙。
+ * 运行时零偏移数学——横躺牌刻字居中问题（连续三轮反馈）的根治方案：
+ * 离线管线以「旋转后墨迹 bbox 中心 = 牌体白面 bbox 中心」逐张自动校准（PIL 实测素材），
+ * 并按参考图修正字向：右家字头朝右(CW)、左家字头朝左(CCW)（v1.4.3 参考图结论，
+ * v1.5.2 重制时误翻 270/90，本轮随预烘焙一并复位）。
  */
-private val FACE_CC = floatArrayOf(
-    43.5f, 74.5f, 43.0f, 72.0f, 43.0f, 70.5f, 43.0f, 71.5f,
-    43.0f, 71.0f, 43.0f, 69.5f, 43.0f, 69.0f, 43.0f, 72.0f,
-    43.0f, 70.5f, 43.5f, 69.5f, 43.0f, 69.0f, 43.0f, 69.5f,
-    43.0f, 69.5f, 43.5f, 69.5f, 43.0f, 69.5f, 43.5f, 69.0f,
-    43.5f, 69.0f, 43.0f, 69.5f, 43.0f, 73.5f, 43.5f, 70.0f,
-    43.5f, 70.5f, 43.0f, 72.0f, 43.5f, 71.0f, 43.0f, 69.5f,
-    43.0f, 71.5f, 43.5f, 70.5f, 43.0f, 71.0f, 45.0f, 70.0f,
-    45.0f, 69.5f, 44.0f, 70.0f, 43.5f, 70.0f, 43.5f, 69.0f,
-    44.5f, 69.5f, 43.5f, 69.0f
-)
+private val tabResCache = HashMap<Int, Int>()
 
-/**
- * 桌牌/小牌四方向刻字目标点（盒坐标）——【白胚素材实测白面中心】：
- *   立牌 tablemjh0/nh0 白面 bbox=(1,2,49,62) → 中心 (25.0,32.0)；
- *   横躺 tablemjwh0/eh0 白面 bbox=(1,13,62,51) → 中心 (31.5,32.0)；
- *   小牌 = 同素材 ×0.8 → 立牌 (20.0,25.6) / 横躺 (25.2,25.6)。
- * ⚠ 不再使用 APK 字节码目标点：那套常量对应 APK 自带素材的白面位置，
- *   而本项目素材来自用户素材包（裁切不同），字节码目标会把墨迹放到白面中心
- *   右下方 1.4~1.6u 处（用户反馈"横向刻字未居中"的主因之二）。
- * PIL 全流程仿真（合成图 vs 牌体逐像素差分）验证：新目标下四方向墨迹落点
- * 与白面中心偏差 ≤0.6u（旧组合最大 ~6u）。
- */
-private val TABLE_CC_X = floatArrayOf(25.0f, 31.5f, 25.0f, 31.5f)
-private val TABLE_CC_Y = floatArrayOf(32.0f, 32.0f, 32.0f, 32.0f)
-private val SMALL_CC_X = floatArrayOf(20.0f, 25.2f, 20.0f, 25.2f)
-private val SMALL_CC_Y = floatArrayOf(25.6f, 25.6f, 25.6f, 25.6f)
-
-/**
- * 逐张刻字对中：令面图内容中心经「缩放+旋转」后正好落在 [tx]/[ty] 目标点。
- * [scale]=面图缩放；[halfW]/[halfH]=缩放后面图半宽/半高。
- * 返回面图未旋转时相对盒左上角的偏移 (ox, oy)（与 Compose 绕自身中心旋转配套）。
- */
-private fun faceCenteredOffset(code: Int, dir: Int, scale: Float, halfW: Float, halfH: Float, tx: Float, ty: Float): Pair<Float, Float> {
-    val dx = (FACE_CC[code * 2] - 44.5f) * scale      // 内容中心相对画布中心
-    val dy = (FACE_CC[code * 2 + 1] - 64f) * scale
-    val rdx: Float; val rdy: Float
-    when (dir) {
-        1 -> { rdx = dy; rdy = -dx }                   // rot270（顺时针）：上→右
-        2 -> { rdx = -dx; rdy = -dy }                  // rot180
-        3 -> { rdx = -dy; rdy = dx }                   // rot90：上→左
-        else -> { rdx = dx; rdy = dy }
+private fun mjTableRes(code: Int, dir: Int, ctx: android.content.Context): Int =
+    tabResCache.getOrPut(code * 4 + dir) {
+        ctx.resources.getIdentifier("mjtab_${code}_$dir", "drawable", ctx.packageName)
     }
-    return (tx - rdx - halfW) to (ty - rdy - halfH)
-}
 
 /** code(0..33) -> 旧版单图牌面（工具条小预览用） */
 internal fun faceRes(code: Int): Int = when (code) {
@@ -201,86 +162,40 @@ internal fun MjBigTile(
 }
 
 /**
- * 桌面牌合成（APK DrawCCMj 1:1）：白胚 1:1 + 面 0.573 缩放旋转。
- * dir: 0=下(立牌 tablemjh0) / 1=右(横躺 tablemjwh0) / 2=上(立牌 tablemjnh0) / 3=左(横躺 tablemjeh0)
- * 占位：dir0/2 = 51x76u，dir1/3 = 64x64u；刻字按 APK 常量偏移（部分向上/侧溢出属原版行为）。
+ * 桌面牌（牌河/副露）：预合成贴图直出。
+ * dir: 0=下(立牌) / 1=右(横躺) / 2=上(立牌倒置) / 3=左(横躺)
+ * 占位：dir0/2 = 51x76u，dir1/3 = 64x64u；刻字已烘焙居中。
  */
 @Composable
 internal fun MjTableTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifier) {
+    val ctx = LocalContext.current
     val boxW = if (dir == 1 || dir == 3) u * 64f else u * 51f
     val boxH = if (dir == 1 || dir == 3) u * 64f else u * 76f
-    val fw = u * 89f * 0.573f          // 51.0u
-    val fh = u * 128f * 0.573f         // 73.34u
-    val bodyRes = when (dir) {
-        1 -> R.drawable.tablemjwh0
-        2 -> R.drawable.tablemjnh0
-        3 -> R.drawable.tablemjeh0
-        else -> R.drawable.tablemjh0
-    }
-    val rotation = when (dir) { 1 -> 270f; 2 -> 180f; 3 -> 90f; else -> 0f }
-    Box(modifier.size(boxW, boxH)) {
-        Image(
-            painter = painterResource(bodyRes),
-            contentDescription = null,
-            contentScale = ContentScale.FillBounds,
-            modifier = Modifier.size(boxW, boxH)
-        )
-        // 刻字逐张对中：目标点=APK 字节码派生（TABLE_CC_*），逐张内容偏差由 FACE_CC 补偿
-        val (ox, oy) = faceCenteredOffset(
-            code, dir, 0.573f, halfW = 25.5f, halfH = 36.67f,
-            tx = TABLE_CC_X[dir], ty = TABLE_CC_Y[dir]
-        )
-        Image(
-            painter = painterResource(psmjRes(code)),
-            contentDescription = null,
-            contentScale = ContentScale.FillBounds,
-            modifier = Modifier
-                .offset(x = u * ox, y = u * oy)
-                .size(fw, fh)
-                .graphicsLayer { rotationZ = rotation }
-        )
-    }
+    val res = remember(code, dir) { mjTableRes(code, dir, ctx) }
+    Image(
+        painter = painterResource(res),
+        contentDescription = null,
+        contentScale = ContentScale.FillBounds,
+        modifier = modifier.size(boxW, boxH)
+    )
 }
 
 /**
- * 小牌合成（APK drawSmallMj 1:1）：白胚 0.8 + 面 0.4584 缩放旋转（他家副露）。
- * 偏移改用白面对齐法（同 MjTableTile）：面内容中心落牌体白面中心（小牌白心 ×0.8）。
+ * 小牌（他家手牌/副露，drawSmallMj 0.8 倍）：同一预合成贴图等比缩放——
+ * 刻字/白面/盒的比例关系在缩放下保持，居中不变。
  */
 @Composable
 internal fun MjSmallTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifier) {
-    val bodyRes = when (dir) {
-        1 -> R.drawable.tablemjwh0
-        2 -> R.drawable.tablemjnh0
-        3 -> R.drawable.tablemjeh0
-        else -> R.drawable.tablemjh0
-    }
+    val ctx = LocalContext.current
     val boxW = if (dir == 1 || dir == 3) u * 64f * 0.8f else u * 51f * 0.8f
     val boxH = if (dir == 1 || dir == 3) u * 64f * 0.8f else u * 76f * 0.8f
-    val fw = u * 89f * 0.4584f          // 40.8u
-    val fh = u * 128f * 0.4584f         // 58.68u
-    val rotation = when (dir) { 1 -> 270f; 2 -> 180f; 3 -> 90f; else -> 0f }
-    // 逐张对中（同 MjTableTile）：小牌目标点 = APK drawSmallMj 字节码派生（SMALL_CC_*）
-    val (ox, oy) = faceCenteredOffset(
-        code, dir, 0.4584f, halfW = 20.4f, halfH = 29.34f,
-        tx = SMALL_CC_X[dir], ty = SMALL_CC_Y[dir]
+    val res = remember(code, dir) { mjTableRes(code, dir, ctx) }
+    Image(
+        painter = painterResource(res),
+        contentDescription = null,
+        contentScale = ContentScale.FillBounds,
+        modifier = modifier.size(boxW, boxH)
     )
-    Box(modifier.size(boxW, boxH)) {
-        Image(
-            painter = painterResource(bodyRes),
-            contentDescription = null,
-            contentScale = ContentScale.FillBounds,
-            modifier = Modifier.size(boxW, boxH)
-        )
-        Image(
-            painter = painterResource(psmjRes(code)),
-            contentDescription = null,
-            contentScale = ContentScale.FillBounds,
-            modifier = Modifier
-                .offset(x = u * ox, y = u * oy)
-                .size(fw, fh)
-                .graphicsLayer { rotationZ = rotation }
-        )
-    }
 }
 
 /** 他家手牌背面：右家 cemian2 / 上家 cemian3 / 左家 cemian4（APK w[1]/w[2]/w[3]） */
