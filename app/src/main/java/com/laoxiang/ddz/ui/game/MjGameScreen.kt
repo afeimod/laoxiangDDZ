@@ -210,46 +210,6 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             ) { content() }
         }
 
-        /**
-         * 牌墙摞（未抓的牌）—— 布局严格按参考图（天凤方城俯视）：
-         * 四条边各 17 摞直排围成矩形方城、四角留空；牌面用项目绿背贴图 mj_wall
-         * （绿面朝上、白棱外露，双层微错位 = 参考图的双白条）。
-         * [appear] 单摞浮现系数（0 隐 → 1 全显），开局按摞错峰驱动。
-         */
-        @Composable
-        fun WallStack(x: Dp, y: Dp, w: Dp, h: Dp, backDx: Dp, backDy: Dp, appear: Float) {
-            if (appear <= 0.01f) return
-            val s = 0.78f + 0.22f * appear
-            Place(x, y) {
-                Box(
-                    Modifier.graphicsLayer {
-                        scaleX = s
-                        scaleY = s
-                    }
-                ) {
-                    // 后层牌（微错位，白棱外露 → 双层感）
-                    Image(
-                        painter = painterResource(R.drawable.mj_wall),
-                        contentDescription = null,
-                        contentScale = ContentScale.FillBounds,
-                        modifier = Modifier
-                            .offset(x = backDx, y = backDy)
-                            .size(w, h)
-                            .alpha(appear * 0.9f)
-                    )
-                    // 前层牌
-                    Image(
-                        painter = painterResource(R.drawable.mj_wall),
-                        contentDescription = "牌墙",
-                        contentScale = ContentScale.FillBounds,
-                        modifier = Modifier
-                            .size(w, h)
-                            .alpha(appear)
-                    )
-                }
-            }
-        }
-
         /** APK DrawFlatAvatar 1:1 玩家信息：头像98x97+庄标39x38右下+名字 g(26)白字+徽章 */
         @Composable
         fun MjApkCard(s: MjSeatView, pos: Int) {
@@ -374,10 +334,10 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         // ---- 开局仪式 v1.5.7：严格按参考视频时序 —— 方城先立 → 点击掷骰（3.2s 未点自动掷）
         //      → 摇骰 1s（变面+旋转+弹跳）→ 定格 0.8s 亮点数 → 一摞一摞从牌墙发牌 → 开局 ----
         // 旧 v1.5.6 把发牌与骰子并行、进局即飞牌，与视频「先骰后发」不符；本版改回视频顺序，
-        // 但方城 300ms 内先淡入立好、骰盒+呼吸提示常驻罗盘中心，桌面从第一帧起就是活的，
+        // 但方城 0.9s 内四面逐摞码出（v1.5.10 图2 布局+参考视频动画）、骰盒+呼吸提示常驻罗盘中心，桌面从第一帧起就是活的，
         // 不会重现「全桌静止卡到掷骰」的观感；自动掷兜底保证永不卡死。
         val deal = remember { Animatable(0f) }
-        val wallIn = remember { Animatable(0f) }
+        val wallBuild = remember { Animatable(0f) }
         val diceRoll = remember { Animatable(0f) }
         val diceFade = remember { Animatable(1f) }
         var dicePair by remember { mutableStateOf(intArrayOf(5, 3)) }
@@ -390,10 +350,11 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             diceDone = false
             diceTapped = false
             deal.snapTo(0f)
-            wallIn.snapTo(0f)
+            wallBuild.snapTo(0f)
             diceRoll.snapTo(0f)
             diceFade.snapTo(1f)
-            wallIn.animateTo(1f, tween(900, easing = LinearEasing))   // 方城按摞错峰立起（~1s 涟漪）
+            // 方城逐摞码出（参考视频 4.4-5.1s：四面同时、一摞一摞弹出，约 0.9s 立完整方城）
+            wallBuild.animateTo(1f, tween(900, easing = LinearEasing))
             // 待掷展示面（点击前不泄露引擎点数）
             diceShown = intArrayOf(Random.nextInt(1, 7), Random.nextInt(1, 7))
             // 骰子点数由引擎掷出（同时决定切墙位置，仪式与发牌一致）
@@ -459,53 +420,72 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             vm.opNotice.collect { t -> if (t != null) { toast = System.nanoTime() to t; vm.clearOpNotice() } }
         }
 
-        // ================= 牌墙方城（未抓的牌，画在最底层，严格按参考视频天凤方城） =================
-        // 参考视频样式：四条边各 17 摞（每摞双层）围成矩形方城；
-        // 上/下墙白端面朝桌心、左/右墙透视压扁端面朝桌心。
-        // 从下墙右端（骰点所定切墙口）逆时针消耗：shown = wallCount 等比映射，
-        // 缺口自下墙右端向左生长。开局随 wallIn 淡入立城，是发牌动画的起飞源。
-        val wallPitch = g(33f)
-        val wallStackW = g(31f)
-        val wallStackH = g(45f)
-        val wallRowW = wallPitch * 16f + wallStackW      // 17 摞横墙总宽
-        val wallXStart = (W - wallRowW) / 2              // 上/下墙左端
-        val wallYTop = fy(122f)                          // 上墙顶（在上家手牌背下方）
-        val wallYBot = fy(326f)                          // 下墙顶
-        val wallColW = g(42f)                            // 左右墙横躺牌径向长
-        val wallColH = g(25f)                            // 左右墙沿列向宽（透视压扁）
-        val wallColPitch = g(24.5f)
-        val wallColY0 = fy(80f)                          // 左右墙列顶
-        val wallColL = fx(118f)                          // 左墙外缘（贴桌缘，四角留空）
-        val wallColR = fx(682f) - wallColW               // 右墙外缘
+        // ================= 牌墙方城 v1.5.10（按用户图2「指尖四川麻将」布局逐处重做） =================
+        // 布局（图2 实测）：四面墙连成闭合方环、围着中央牌河区；上下墙各 17 摞、左右墙各 9 摞
+        // （环容量 52 摞 ≥ 开局余牌 42 摞）。牌面 = 项目自有素材：上下墙 mj_wall（绿背立牌），
+        // 左右墙 mj_wall_r（横牌白端朝桌心，左墙镜像）—— 不再使用 v1.5.8 自绘黑色牌背。
+        // 缺口：自下墙右端逆时针消耗（下→左→上→右），显示摞数 = wallCount/2，发牌期间平滑消耗。
+        // 动画（参考视频 4.4-5.1s）：开局四面同时逐摞弹出（每摞 2.5 摞窗口的 scale+alpha），
+        // 发牌期间缺口从下墙右端生长 —— 牌从墙上一摞摞被摸走。
         run {
-            val appear = wallIn.value
-            if (appear > 0.01f) {
-                // 摞位（消耗序）：下排右→左 17 → 左列下→上 17 → 上排左→右 17 → 右列上→下 17
-                val shown = (snap.wallCount * 68 / 84).coerceIn(0, 68)
-                for (idx in (68 - shown).coerceAtLeast(0) until 68) {
-                    // 单摞错峰浮现：0.7 个 wallIn 时长内按摞序涟漪立城
-                    val p = (appear * 1.7f - idx * 0.7f / 68f).coerceIn(0f, 1f)
-                    when {
-                        // 下排（右→左）：后层向下露白棱（参考图双白条）
-                        idx < 17 -> WallStack(
-                            wallXStart + wallPitch * (16 - idx), wallYBot,
-                            wallStackW, wallStackH, 0.dp, g(7f), p
-                        )
-                        // 左列（下→上）：横躺牌，后层向下露白棱
-                        idx < 34 -> WallStack(
-                            wallColL, wallColY0 + wallColPitch * (33 - idx),
-                            wallColW, wallColH, 0.dp, g(5f), p
-                        )
-                        // 上排（左→右）：后层向上（背侧微露）
-                        idx < 51 -> WallStack(
-                            wallXStart + wallPitch * (idx - 34), wallYTop,
-                            wallStackW, wallStackH, 0.dp, -g(7f), p
-                        )
-                        // 右列（上→下）：横躺牌
-                        else -> WallStack(
-                            wallColR, wallColY0 + wallColPitch * (idx - 51),
-                            wallColW, wallColH, 0.dp, g(5f), p
-                        )
+            val ringL = fx(118f); val ringR = fx(682f)
+            val ringT = fy(112f); val ringB = fy(390f)
+            val bandHgt = fy(48f)                        // 上下墙厚（=立牌高，单位牌比例 0.75 与图2 一致）
+            val bandWid = fx(34f)                        // 左右墙厚
+            val hbX0 = ringL + bandWid                   // 上下墙横向范围（让开左右墙四角）
+            val hbX1 = ringR - bandWid
+            val hbPitch = (hbX1 - hbX0) / 17f
+            val vbY0 = ringT                             // 左右墙贯穿全高（四角由立柱补齐，环闭合）
+            val vbY1 = ringB
+            val vbPitch = (vbY1 - vbY0) / 9f
+            // 摞位（消耗序，图2 缺口位：自上墙左端起 → 右列 → 下墙 → 左列，
+            // 开局缺口露在上墙远端、我方面前下墙保持完整）
+            // 元组 = (x, y, 竖墙?, 左墙镜像?, 边内摞数, 边内序号)
+            val ringX1 = ringR - bandWid
+            val posList = ArrayList<Array<Any>>(52)
+            for (k in 0 until 17) posList.add(arrayOf(hbX0 + hbPitch * k, ringT, false, false, 17, k))
+            for (k in 0 until 9) posList.add(arrayOf(ringX1, vbY0 + vbPitch * k, true, false, 9, k))
+            for (k in 0 until 17) posList.add(arrayOf(hbX0 + hbPitch * (16 - k), ringB - bandHgt, false, false, 17, k))
+            for (k in 0 until 9) posList.add(arrayOf(ringL, vbY0 + vbPitch * (8 - k), true, true, 9, k))
+            val targetShown = (snap.wallCount / 2).coerceIn(0, 52)
+            val shownF = if (deal.value >= 1f) targetShown.toFloat()
+                         else 52f - (52f - targetShown) * deal.value
+            val buildP = wallBuild.value
+            posList.forEachIndexed { idx, p ->
+                if (idx < 52 - shownF) return@forEachIndexed         // 已消耗 → 缺口
+                val x = p[0] as Dp
+                val y = p[1] as Dp
+                val vert = p[2] as Boolean
+                val mirror = p[3] as Boolean
+                val sideN = p[4] as Int
+                val k = p[5] as Int
+                // 四面同时逐摞弹出（边内序号 k 越大越晚，全部在 buildP=1 时立完）
+                val ap = ((buildP * (sideN + 2.5f) - k) / 2.5f).coerceIn(0f, 1f)
+                if (ap <= 0.01f) return@forEachIndexed
+                Place(x, y) {
+                    Box(
+                        Modifier.graphicsLayer {
+                            alpha = ap
+                            val s = 0.55f + 0.45f * ap
+                            scaleX = if (mirror) -s else s
+                            scaleY = s
+                        }
+                    ) {
+                        if (vert) {
+                            Image(
+                                painter = painterResource(R.drawable.mj_wall_r),
+                                contentDescription = null,
+                                contentScale = ContentScale.FillBounds,
+                                modifier = Modifier.size(bandWid, vbPitch)
+                            )
+                        } else {
+                            Image(
+                                painter = painterResource(R.drawable.mj_wall),
+                                contentDescription = null,
+                                contentScale = ContentScale.FillBounds,
+                                modifier = Modifier.size(hbPitch - fy(3f), bandHgt)
+                            )
+                        }
                     }
                 }
             }
@@ -659,7 +639,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             )
         }
         // 「第 X 局」金色大字（参考视频「東一局」开场字样，掷骰开始后淡出）
-        if (!diceTapped && wallIn.value > 0.9f) {
+        if (!diceTapped && wallBuild.value > 0.9f) {
             Text(
                 "第 ${snap.round} 局",
                 color = Color(0xFFE8C860), fontSize = 40.sp, fontWeight = FontWeight.Black,
@@ -735,7 +715,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                         val s = 0.7f + 0.3f * p
                         scaleX = s; scaleY = s
                         // 从右列牌墙摞飞入落位
-                        translationX = (wallColR + wallColW / 2f - fx(702f)).toPx() * (1f - p)
+                        translationX = (wallColR + g(5f) - fx(702f)).toPx() * (1f - p)
                         translationY = (fy(210f) - fy(80f) - g(22f) * idx).toPx() * (1f - p)
                     }
                 ) { MjBackTile(1, u) }
@@ -855,7 +835,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                             val s = 0.7f + 0.3f * p
                             scaleX = s; scaleY = s
                             // 从左列牌墙摞飞入落位
-                            translationX = (wallColL + wallColW / 2f - fx(86f)).toPx() * (1f - p)
+                            translationX = (wallColL + g(5f) - fx(86f)).toPx() * (1f - p)
                             translationY = (fy(200f) - handTop - g(22f) * idx).toPx() * (1f - p)
                         }
                     ) { MjBackTile(3, u) }
