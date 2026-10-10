@@ -165,12 +165,19 @@ internal fun MjBigTile(
  * 桌面牌（牌河/副露）：预合成贴图直出。
  * dir: 0=下(立牌) / 1=右(横躺) / 2=上(立牌倒置) / 3=左(横躺)
  * 占位：dir0/2 = 51x76u，dir1/3 = 64x64u；刻字已烘焙居中。
+ * [scale] 整体缩放（v1.5.8 牌河小牌用，参考视频牌河牌约为副露 0.55 倍）。
  */
 @Composable
-internal fun MjTableTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifier) {
+internal fun MjTableTile(
+    code: Int,
+    dir: Int,
+    u: Dp,
+    modifier: Modifier = Modifier,
+    scale: Float = 1f
+) {
     val ctx = LocalContext.current
-    val boxW = if (dir == 1 || dir == 3) u * 64f else u * 51f
-    val boxH = if (dir == 1 || dir == 3) u * 64f else u * 76f
+    val boxW = (if (dir == 1 || dir == 3) u * 64f else u * 51f) * scale
+    val boxH = (if (dir == 1 || dir == 3) u * 64f else u * 76f) * scale
     val res = remember(code, dir) { mjTableRes(code, dir, ctx) }
     Image(
         painter = painterResource(res),
@@ -185,10 +192,10 @@ internal fun MjTableTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifi
  * 刻字/白面/盒的比例关系在缩放下保持，居中不变。
  */
 @Composable
-internal fun MjSmallTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifier) {
+internal fun MjSmallTile(code: Int, dir: Int, u: Dp, modifier: Modifier = Modifier, scale: Float = 0.8f) {
     val ctx = LocalContext.current
-    val boxW = if (dir == 1 || dir == 3) u * 64f * 0.8f else u * 51f * 0.8f
-    val boxH = if (dir == 1 || dir == 3) u * 64f * 0.8f else u * 76f * 0.8f
+    val boxW = (if (dir == 1 || dir == 3) u * 64f else u * 51f) * scale
+    val boxH = (if (dir == 1 || dir == 3) u * 64f else u * 76f) * scale
     val res = remember(code, dir) { mjTableRes(code, dir, ctx) }
     Image(
         painter = painterResource(res),
