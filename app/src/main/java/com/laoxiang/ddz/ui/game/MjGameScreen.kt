@@ -19,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
@@ -220,7 +221,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         fun WallStackH(x: Dp, y: Dp, w: Dp, h: Dp, topSide: Boolean, appear: Float) {
             if (appear <= 0.01f) return
             Place(x, y) {
-                Canvas(Modifier.size(w, h)) {
+                Canvas(Modifier.size(w, h).alpha(appear)) {
                     val bw = size.width
                     val bh = size.height
                     val bodyH = bh * 0.52f
@@ -257,7 +258,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                         Brush.verticalGradient(listOf(Color(0xFFEAE7DC), Color(0xFFCCC8B9))),
                         Offset(0f, bar2Y), Size(bw, barH), CornerRadius(bw * 0.1f, bw * 0.1f)
                     )
-                }.graphicsLayer { alpha = appear }
+                }
             }
         }
 
@@ -265,7 +266,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         fun WallStackV(x: Dp, y: Dp, w: Dp, h: Dp, leftSide: Boolean, appear: Float) {
             if (appear <= 0.01f) return
             Place(x, y) {
-                Canvas(Modifier.size(w, h)) {
+                Canvas(Modifier.size(w, h).alpha(appear)) {
                     val bw = size.width
                     val bh = size.height
                     // 透视压扁的横躺牌：黑块 + 朝心侧白端条（左右墙端面均朝桌心）
@@ -294,7 +295,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                         Offset(barX + barW / 2f, bh * 0.84f),
                         strokeWidth = 0.8.dp.toPx()
                     )
-                }.graphicsLayer { alpha = appear }
+                }
             }
         }
 
