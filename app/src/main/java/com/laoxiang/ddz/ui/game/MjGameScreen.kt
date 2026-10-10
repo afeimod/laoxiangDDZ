@@ -19,7 +19,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
@@ -427,14 +426,23 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         // 缺口：自下墙右端逆时针消耗（下→左→上→右），显示摞数 = wallCount/2，发牌期间平滑消耗。
         // 动画（参考视频 4.4-5.1s）：开局四面同时逐摞弹出（每摞 2.5 摞窗口的 scale+alpha），
         // 发牌期间缺口从下墙右端生长 —— 牌从墙上一摞摞被摸走。
+        // v1.5.11 修复：环几何提升为共享常量 —— 发牌动画（四家手牌从对应墙摞起飞）与方城渲染
+        // 同源取坐标；v1.5.10 重写牌墙段时误删这组定义，导致 CI 七处 unresolved reference。
+        val ringL = fx(118f); val ringR = fx(682f)
+        val ringT = fy(112f); val ringB = fy(390f)
+        val bandHgt = fy(48f)                        // 上下墙厚（=立牌高，单位牌比例 0.75 与图2 一致）
+        val bandWid = fx(34f)                        // 左右墙厚
+        val wallXStart = ringL + bandWid             // 上/下墙横向范围（让开左右墙四角）
+        val wallRowW = ringR - bandWid - wallXStart  // 上下墙 17 摞总宽
+        val wallPitch = wallRowW / 17f               // 上下墙摞距
+        val wallYTop = ringT                         // 上墙 y（对家发牌起飞源）
+        val wallYBot = ringB - bandHgt               // 下墙 y（我方发牌起飞源）
+        val wallColL = ringL                         // 左墙 x（左家发牌起飞源）
+        val wallColR = ringR - bandWid               // 右墙 x（右家发牌起飞源）
         run {
-            val ringL = fx(118f); val ringR = fx(682f)
-            val ringT = fy(112f); val ringB = fy(390f)
-            val bandHgt = fy(48f)                        // 上下墙厚（=立牌高，单位牌比例 0.75 与图2 一致）
-            val bandWid = fx(34f)                        // 左右墙厚
-            val hbX0 = ringL + bandWid                   // 上下墙横向范围（让开左右墙四角）
-            val hbX1 = ringR - bandWid
-            val hbPitch = (hbX1 - hbX0) / 17f
+            val hbX0 = wallXStart
+            val hbX1 = wallColR
+            val hbPitch = wallPitch
             val vbY0 = ringT                             // 左右墙贯穿全高（四角由立柱补齐，环闭合）
             val vbY1 = ringB
             val vbPitch = (vbY1 - vbY0) / 9f
