@@ -175,6 +175,13 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
             is MjFx.Claim -> sound.play(VoiceMap.forMjAction(f.kind) ?: "play", 0.95f)
             is MjFx.Hu -> {
                 sound.play(if (f.selfDraw) "voice_mj_zimo" else "voice_mj_hu", 1f)
+                // 参考 APK 结算音效：自摸赢=zmoying、点炮赢=fpaoying（只在我赢时垫播，延迟避叠音）
+                if (f.seat == mySeat.value) {
+                    viewModelScope.launch {
+                        delay(500)
+                        sound.playRaw(if (f.selfDraw) "mjw_sfx_zimoying" else "mjw_sfx_fpaoying", 0.9f)
+                    }
+                }
                 // 随后报番型（延迟避免叠音）
                 val fanVoice = f.fans.firstNotNullOfOrNull { VoiceMap.forMjFan(it) }
                 if (fanVoice != null) {
@@ -184,7 +191,10 @@ class MjViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
             }
-            is MjFx.LiuJu -> sound.play("voice_mj_liuju", 1f)
+            is MjFx.LiuJu -> {
+                sound.play("voice_mj_liuju", 1f)
+                sound.playRaw("mjw_sfx_huangzhuang", 0.8f)
+            }
             is MjFx.GameOver -> {}
         }
     }

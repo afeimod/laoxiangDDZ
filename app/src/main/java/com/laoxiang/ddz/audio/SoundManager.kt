@@ -94,9 +94,15 @@ class SoundManager(private val context: Context) {
 
     // ------------------------------------------------ 关键映射（素材包替换）
 
-    /** 斗地主参考 APK：把项目语音 key 换成 apk 男女声（随机混搭，贴合"男女混搭 TTS"） */
+    /**
+     * 语音音色：整局固定一次（v1.6.0 反馈修复：此前每次播放都随机男/女，
+     * 同一句牌连着播会男女声乱跳 —— 改为进程内固定音色，贴近参考 APK 单音色播报）
+     */
+    private val voiceGender: String = if (Random.nextBoolean()) "vm" else "vw"
+
+    /** 斗地主参考 APK：把项目语音 key 换成 apk 固定音色语音 */
     private fun ddzVoiceOf(key: String): String? {
-        val g = if (Random.nextBoolean()) "vm" else "vw"
+        val g = voiceGender
         return when {
             // 单张点数：3..10/j/q/k/a/2/双王 → apk 3..17
             key.startsWith("voice_c") -> {
@@ -112,6 +118,11 @@ class SoundManager(private val context: Context) {
             key.startsWith("voice_p") -> {
                 val n = key.removePrefix("voice_p").toIntOrNull() ?: return null
                 if (n in 3..15) "ddz_${g}_pair$n" else null
+            }
+            // 牌型播报（三带一/顺子/连对…）→ apk 同名牌型语音（此前漏映射，TTS 与 apk 声混播）
+            key.startsWith("voice_cardtype") -> {
+                val n = key.removePrefix("voice_cardtype").toIntOrNull() ?: return null
+                if (n in 3..14 && n != 9 && n != 10) "ddz_${g}_cardtype$n" else null
             }
             key == "voice_jiao" || key == "voice_qiangd" -> "ddz_${g}_jdz${Random.nextInt(1, 7)}"
             key == "voice_bujiao" || key == "voice_buqiangd" -> "ddz_${g}_buyao${Random.nextInt(1, 5)}"
@@ -141,13 +152,18 @@ class SoundManager(private val context: Context) {
             PACK_DDZ -> when (key) {
                 "play" -> "ddz_sfx_chupai"
                 "select" -> "ddz_sfx_xuanpai"
-                "shuffle" -> "ddz_sfx_dealcards"
-                "deal" -> "ddz_sfx_dealcards"
+                "shuffle" -> "ddz_sfx_dealcards"          // 整段发牌音（参考 APK，一局一次）
+                // ⚠发牌逐张点击音：不能用 4.3s 的 dealcards（GameScreen 每张 65ms 一响，
+                //   v1.6.0 初版误映射成长音，开局变成十几条 4.3s 叠音）—— 用裁剪短音
+                "deal" -> "ddz_sfx_deal"
                 "bomb" -> "ddz_sfx_zhadan"
                 "wangzha" -> "ddz_sfx_rocket"
                 "plane" -> "ddz_sfx_feiji"
                 "win" -> "ddz_sfx_win"
                 "lose" -> "ddz_sfx_lose"
+                "spring" -> "ddz_sfx_spring"               // 春天（此前未接逻辑）
+                "baojing" -> "ddz_sfx_baojing"             // 剩两张牌报警（此前未接逻辑）
+                "button" -> "ddz_sfx_button"               // 按钮（此前未接逻辑）
                 else -> ddzVoiceOf(key) ?: key
             }
             PACK_MJ -> when (key) {
@@ -156,6 +172,7 @@ class SoundManager(private val context: Context) {
                 "shuffle" -> "mjw_sfx_xipai"
                 "deal" -> "mjw_sfx_fapai"
                 "dice" -> "mjw_sfx_dice"
+                "button" -> "mjw_sfx_button"
                 else -> mjVoiceOf(key) ?: key
             }
             else -> key

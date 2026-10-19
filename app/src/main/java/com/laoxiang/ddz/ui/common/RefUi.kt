@@ -44,16 +44,15 @@ import kotlin.math.sin
  * —— 主页模式按钮 / 金圈图标钮 / NPC 对话气泡 / 跑马灯 / 浮动动画
  */
 
-/** 参考主页四大模式按钮（挑战/休闲/大师/炸弹 场次卡） */
+/** 参考主页四大模式方格（挑战/休闲/大师/炸弹 场次卡）：宽扁方格 + 大号美术字模式名 + 浮动 */
 @Composable
-fun RefModeButton(
+fun RefModeTile(
     title: String,
-    subtitle: String,
     gradTop: Color,
     gradBottom: Color,
     floatPhase: Float,
     modifier: Modifier = Modifier,
-    badge: (@Composable () -> Unit)? = null,
+    deco: (@Composable androidx.compose.foundation.layout.BoxScope.() -> Unit)? = null,
     onClick: () -> Unit
 ) {
     val t = rememberInfiniteTransition(label = "float")
@@ -65,39 +64,35 @@ fun RefModeButton(
     )
     Box(
         modifier
-            .offset(y = (f * 5).dp)
-            .shadow(7.dp, RoundedCornerShape(20.dp))
-            .clip(RoundedCornerShape(20.dp))
+            .offset(y = (f * 4).dp)
+            .shadow(8.dp, RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(18.dp))
             .background(Brush.verticalGradient(listOf(gradTop, gradBottom)))
-            .border(2.5.dp, Color(0xFFFFD97A), RoundedCornerShape(20.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 12.dp),
+            .border(3.dp, Color(0xFFFFD97A), RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         // 顶部高光
         Box(
             Modifier
                 .align(Alignment.TopCenter)
-                .fillMaxWidth(0.86f)
-                .height(14.dp)
-                .clip(RoundedCornerShape(bottomStart = 14.dp, bottomEnd = 14.dp))
-                .background(Color(0x33FFFFFF))
+                .fillMaxWidth(0.88f)
+                .height(12.dp)
+                .clip(RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp))
+                .background(Color(0x2EFFFFFF))
         )
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            badge?.invoke()
-            Spacer(Modifier.height(4.dp))
-            Text(
-                title,
-                fontSize = 22.sp, fontWeight = FontWeight.Black,
-                color = Color.White,
-                style = androidx.compose.ui.text.TextStyle(
-                    shadow = androidx.compose.ui.graphics.Shadow(
-                        Color(0xB4000000), Offset(1.5f, 2f), 4f
-                    )
+        deco?.invoke()
+        // 参考卡面只有模式名美术字（副标题一律不臆造）
+        Text(
+            title,
+            fontSize = 30.sp, fontWeight = FontWeight.Black,
+            color = Color.White,
+            style = androidx.compose.ui.text.TextStyle(
+                shadow = androidx.compose.ui.graphics.Shadow(
+                    Color(0xB4000000), Offset(1.5f, 2.5f), 5f
                 )
             )
-            Text(subtitle, fontSize = 11.sp, color = Color(0xCCFFF3C4))
-        }
+        )
     }
 }
 
@@ -123,13 +118,10 @@ fun RefIconBtn(label: String, size: Dp = 44.dp, onClick: () -> Unit) {
     }
 }
 
-/** NPC 对话气泡（参考主页 UI_shouye_dhk：白底金边圆角框 + 左侧名牌） */
+/** NPC 对话气泡（参考主页 UI_shouye_dhk：白底金边圆角框 + 名牌，尾巴指向下方人物） */
 @Composable
 fun RefNpcBubble(name: String, tip: String, alpha: Float = 1f, modifier: Modifier = Modifier) {
-    Row(
-        modifier.graphicsLayer { this.alpha = alpha },
-        verticalAlignment = Alignment.Bottom
-    ) {
+    Column(modifier.graphicsLayer { this.alpha = alpha }) {
         Box(
             Modifier
                 .shadow(6.dp, RoundedCornerShape(16.dp))
@@ -144,10 +136,10 @@ fun RefNpcBubble(name: String, tip: String, alpha: Float = 1f, modifier: Modifie
                 Text(tip, fontSize = 13.sp, color = Color(0xFF595959), maxLines = 2)
             }
         }
-        // 气泡尾巴
-        Canvas(Modifier.size(16.dp, 14.dp).offset(x = (-1).dp)) {
+        // 气泡尾巴（左下角，指向下方人物）
+        Canvas(Modifier.size(16.dp, 12.dp).offset(x = 22.dp)) {
             val p = Path().apply {
-                moveTo(0f, 4f); lineTo(size.width, 0f); lineTo(size.width * 0.55f, size.height); close()
+                moveTo(0f, 0f); lineTo(size.width, 0f); lineTo(size.width * 0.3f, size.height); close()
             }
             drawPath(p, Color(0xFFF7FFFDF4))
         }

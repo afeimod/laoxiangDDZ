@@ -469,6 +469,7 @@ private fun LandscapeTable(
                     text = if (snap.phase == Phase.BIDDING) "不 叫" else "不 抢",
                     container = bluePillBrush()
                 ) {
+                    gameVm.sfx("button", 0.8f)
                     val err = gameVm.bid(false)
                     if (err != null) onToast(err)
                 }
@@ -476,6 +477,7 @@ private fun LandscapeTable(
                     text = if (snap.phase == Phase.BIDDING) "叫地主" else "抢地主",
                     container = orangePillBrush()
                 ) {
+                    gameVm.sfx("button", 0.8f)
                     val err = gameVm.bid(true)
                     if (err != null) onToast(err)
                 }
@@ -492,14 +494,17 @@ private fun LandscapeTable(
                     container = bluePillBrush(),
                     enabled = snap.lastMove != null
                 ) {
+                    gameVm.sfx("button", 0.8f)
                     val err = gameVm.passTurn()
                     if (err != null) onToast(err)
                 }
                 PillButton(text = "提 示", container = bluePillBrush()) {
+                    gameVm.sfx("button", 0.8f)
                     val err = gameVm.hint()
                     if (err != null) onToast(err)
                 }
                 PillButton(text = "出 牌", container = orangePillBrush()) {
+                    gameVm.sfx("button", 0.8f)
                     val err = gameVm.playSelected()
                     if (err != null) onToast(err)
                 }

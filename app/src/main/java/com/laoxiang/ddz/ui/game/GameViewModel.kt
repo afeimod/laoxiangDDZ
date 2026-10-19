@@ -100,6 +100,9 @@ class GameViewModel(app: Application) : AndroidViewModel(app), NetRoomUi {
     private var client: LanClient? = null
     private var scanner: RoomScanner? = null
 
+    /** 报牌报警一局一次（参考 APK baojing）：洗牌重置，任一家剩 2 张时触发 */
+    private var baojingWarned = false
+
     /** 联机期间持有的 WiFi 低延迟锁（v19）：
      *  手机 WiFi 省电模式会让 AP 缓存发往本机的报文（信号满格也有秒级延迟），
      *  对局期间保持低延迟模式，点抢地主/出牌才能即时送达。 */
@@ -133,7 +136,10 @@ class GameViewModel(app: Application) : AndroidViewModel(app), NetRoomUi {
         fx.tryEmit(f)
         // 同步音效/语音
         when (f) {
-            is Fx.Shuffle -> sound.play("shuffle")
+            is Fx.Shuffle -> {
+                baojingWarned = false
+                sound.play("shuffle")
+            }
             // 叫抢喊话语音：叫地主/不叫/抢地主/不抢
             is Fx.BidCall -> sound.play("voice_jiao")
             is Fx.BidPass -> sound.play("voice_bujiao")
@@ -145,15 +151,28 @@ class GameViewModel(app: Application) : AndroidViewModel(app), NetRoomUi {
                 val voice = VoiceMap.forMove(snapshot.value?.lastMove)
                 if (voice != null) sound.play(voice, 0.95f)
                 sound.play("play", 0.35f)
+                // 参考 APK 报牌：某家只剩两张牌时响一声报警（一局一次）
+                if (!baojingWarned) {
+                    val snap = snapshot.value ?: return
+                    val low = snap.seats.any { s -> s.seat != mySeat.value && s.hand.size == 2 }
+                    if (low) {
+                        baojingWarned = true
+                        sound.play("baojing", 0.9f)
+                    }
+                }
             }
             is Fx.Pass -> sound.play("pass")
             // 王炸（双王）才用王炸音效；普通炸弹用专用爆炸音效（语音“炸弹/王炸”已随 Played 播报）
             is Fx.Bomb -> sound.play(if (f.rocket) "wangzha" else "bomb")
             is Fx.Plane -> sound.play("plane")
-            is Fx.GameOver -> sound.play(
-                if ((f.landlordWon && mySeat.value == snapshot.value?.landlord) ||
-                    (!f.landlordWon && mySeat.value != snapshot.value?.landlord)) "win" else "lose"
-            )
+            is Fx.GameOver -> {
+                // 参考 APK：春天先响专用音效再结算胜负音
+                if (f.spring) sound.play("spring", 0.9f)
+                sound.play(
+                    if ((f.landlordWon && mySeat.value == snapshot.value?.landlord) ||
+                        (!f.landlordWon && mySeat.value != snapshot.value?.landlord)) "win" else "lose"
+                )
+            }
             is Fx.ChatBubble -> {}
             else -> {}
         }

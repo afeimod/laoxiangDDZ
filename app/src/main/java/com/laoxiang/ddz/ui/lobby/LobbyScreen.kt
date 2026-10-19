@@ -43,7 +43,7 @@ import com.laoxiang.ddz.R
 import com.laoxiang.ddz.ui.common.AvatarImage
 import com.laoxiang.ddz.ui.common.RefIconBtn
 import com.laoxiang.ddz.ui.common.RefMarquee
-import com.laoxiang.ddz.ui.common.RefModeButton
+import com.laoxiang.ddz.ui.common.RefModeTile
 import com.laoxiang.ddz.ui.common.RefNpcBubble
 import com.laoxiang.ddz.ui.common.RefNpcFigure
 import com.laoxiang.ddz.ui.game.GameViewModel
@@ -111,12 +111,15 @@ fun LobbyScreen(
         }
     }
 
-    // ---------- NPC 台词轮播（参考主页 UI_shouye_dhk 提示气泡，8s 淡入淡出） ----------
+    // ---------- NPC 台词轮播（参考 APK homeNpcTips 原文，淡入淡出） ----------
     val npcTips = listOf(
-        "欢迎回来！来几局斗地主吧",
-        "棋牌合集上新：跑得快 / 掼蛋 / 升级",
-        "麻将血战开局，点击掷骰子",
-        "两台手机连同一个 WiFi 就能联机"
+        "欢迎您！亲爱的玩家！",
+        "欢迎回来！",
+        "连炸不够爽？就去炸弹模式！",
+        "成为炸弹王者！\n就可以体验4连炸了！",
+        "都是小菜一碟？快去\n挑战模式试试吧！",
+        "喜欢，记得分享给朋友噢~",
+        "快去看看现在已取得哪些\n成就了吧~"
     )
     var tipIdx by remember { mutableStateOf(0) }
     val tipAlpha = remember { Animatable(1f) }
@@ -128,17 +131,41 @@ fun LobbyScreen(
             tipAlpha.animateTo(1f, tween(900))
         }
     }
+    // 跑马灯：参考 APK gGameTips 原文提示语轮播
+    val hallTips = listOf(
+        "在设置面板里面可以切换桌面和背景音乐！",
+        "在设置面板里面可以取消出牌倒计时！",
+        "点击头像有惊喜哟！您可以设置新的头像！",
+        "随意领取游戏道具（看底牌、金币翻倍等）",
+        "炸弹模式可以出连炸，比王炸大，倍率8倍起",
+        "春天3倍，王炸4倍，二连炸4倍、三连炸8倍、四连炸16倍...",
+        "完成炸弹王者成就后，系统会给玩家发4连炸！",
+        "炸弹模式机器人被赢光后，每次加的钱只有1万！"
+    )
+    var tipIdx2 by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(12000)
+            tipIdx2 = (tipIdx2 + 1) % hallTips.size
+        }
+    }
     var hallToast by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(hallToast) {
         if (hallToast != null) { delay(1600); hallToast = null }
     }
     var showHelp by remember { mutableStateOf(false) }
 
-    Box(
+    BoxWithConstraints(
         Modifier
             .fillMaxSize()
             .background(Color(0xFF2B1B4D))
     ) {
+        val SW = maxWidth
+        val SH = maxHeight
+        // 参考设计稿 1280x720（HallScene.luac 实测坐标；Cocos y-up 已换算为顶部原点）
+        fun fxr(v: Float) = SW * (v / 1280f)
+        fun fyr(v: Float) = SH * (v / 720f)
+
         // 参考斗地主 APK 主页背景（login/hallbg.jpg 1280x720 游乐园夜场）
         Image(
             painter = painterResource(R.drawable.ddz_hall_bg),
@@ -157,137 +184,146 @@ fun LobbyScreen(
                 )
         )
 
+        // ---- 顶栏：玩家胶囊（左上） + 品牌（中） + 金圈功能排
+        //      （参考 HallScene 图标位：帮助530 / 成就650 / 奖励770 / 分享1127 / 设置1220）
+        PlayerCapsule(
+            avatar = avatar, nickname = nickname,
+            beans = prefs.beans, wins = prefs.wins, losses = prefs.losses,
+            onEditName = { showNicknameEditor = true },
+            onPickAvatar = { showAvatarPicker = true },
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 12.dp, top = 8.dp)
+        )
         Column(
             Modifier
-                .fillMaxSize()
-                .systemBarsPadding()
+                .align(Alignment.TopCenter)
+                .padding(top = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // ---- 顶栏：玩家胶囊 + 品牌 + 金圈功能排（参考主页 右上设置/分享位）
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                PlayerCapsule(
-                    avatar = avatar, nickname = nickname,
-                    beans = prefs.beans, wins = prefs.wins, losses = prefs.losses,
-                    onEditName = { showNicknameEditor = true },
-                    onPickAvatar = { showAvatarPicker = true }
-                )
-                Spacer(Modifier.weight(1f))
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        "老乡棋牌",
-                        fontSize = 22.sp, fontWeight = FontWeight.Black,
-                        color = Color.White,
-                        style = androidx.compose.ui.text.TextStyle(
-                            shadow = androidx.compose.ui.graphics.Shadow(
-                                color = Color(0xB3260A3C),
-                                offset = androidx.compose.ui.geometry.Offset(1.5f, 2f),
-                                blurRadius = 6f
-                            )
-                        )
-                    )
-                    Text("斗地主 · 麻将 · 合集", fontSize = 9.sp, color = Color(0xCCE8D8FF))
-                }
-                Spacer(Modifier.weight(1f))
-                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    RefIconBtn("帮助", 40.dp) { showHelp = true }
-                    RefIconBtn("奖励", 40.dp) { hallToast = "每天来玩就有奖励拿" }
-                    RefIconBtn("分享", 40.dp) { hallToast = "把快乐分享给老乡们" }
-                    SettingsGear { showSettings = true }
-                }
-            }
-
-            // ---- 跑马灯公告（参考大厅 Notice 条）
-            RefMarquee(
-                "欢迎来到老乡棋牌！斗地主、四川血战麻将、跑得快、掼蛋、升级……全部免费开打",
-                Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .fillMaxWidth(0.72f)
-                    .padding(top = 2.dp)
-            )
-
-            Spacer(Modifier.weight(1f))
-
-            // ---- 左下：NPC 小人 + 台词气泡（参考主页人物位）
-            Row(
-                Modifier
-                    .align(Alignment.Start)
-                    .padding(start = 18.dp),
-                verticalAlignment = Alignment.Bottom
-            ) {
-                RefNpcFigure(108.dp)
-                Spacer(Modifier.width(6.dp))
-                RefNpcBubble("房东大妈", npcTips[tipIdx], tipAlpha.value)
-            }
-
-            Spacer(Modifier.weight(1.1f))
-
-            // ---- 右侧四大模式按钮（参考主页 挑战/休闲/大师/炸弹 2x2 浮动布局）
-            val levelLabel = listOf("简单", "中等", "困难")[aiLevel.coerceIn(0, 2)]
-            Column(
-                Modifier
-                    .align(Alignment.End)
-                    .padding(end = 26.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    RefModeButton(
-                        title = "休闲模式", subtitle = "斗地主 · 电脑$levelLabel",
-                        gradTop = Color(0xFF6FCF4E), gradBottom = Color(0xFF2E8B2A),
-                        floatPhase = 0f,
-                        onClick = { onSingle(aiLevel) }
-                    )
-                    RefModeButton(
-                        title = "挑战模式", subtitle = "斗地主 · 困难AI",
-                        gradTop = Color(0xFFFFA53E), gradBottom = Color(0xFFE2661B),
-                        floatPhase = 0.3f,
-                        onClick = { onSingle(2) }
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    RefModeButton(
-                        title = "大师模式", subtitle = "跑得快 · 掼蛋 · 麻将",
-                        gradTop = Color(0xFF9D7BFF), gradBottom = Color(0xFF5B3FBF),
-                        floatPhase = 0.6f,
-                        onClick = onCollection
-                    )
-                    RefModeButton(
-                        title = "炸弹场", subtitle = "局域网 · 面对面开战",
-                        gradTop = Color(0xFFFF6E5E), gradBottom = Color(0xFFC62828),
-                        floatPhase = 0.85f,
-                        badge = {
-                            // 炸弹小徽（参考主页 U_icon_zhadan：黑弹+火花）
-                            Canvas(Modifier.size(30.dp)) {
-                                drawCircle(Color(0xFF2B2B33), size.width * 0.30f, Offset(size.width * 0.46f, size.height * 0.58f))
-                                drawRect(
-                                    Color(0xFF55555F),
-                                    Offset(size.width * 0.52f, size.height * 0.36f),
-                                    androidx.compose.ui.geometry.Size(size.width * 0.14f, size.height * 0.09f)
-                                )
-                                drawCircle(Color(0xFFFFC94D), size.width * 0.05f, Offset(size.width * 0.66f, size.height * 0.28f))
-                                drawCircle(Color(0xFFFF7A3D), size.width * 0.035f, Offset(size.width * 0.72f, size.height * 0.20f))
-                            }
-                        },
-                        onClick = { showNetChooser = true }
-                    )
-                }
-            }
-
-            Spacer(Modifier.weight(0.35f))
-
-            // 音乐署名（CC BY 4.0 要求）：麻将 BGM = Ishikari Lore - Kevin MacLeod
             Text(
-                "麻将背景音乐：Ishikari Lore · Kevin MacLeod (incompetech.com) · CC BY 4.0",
-                fontSize = 9.sp,
-                color = Color(0x59FFFFFF),
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(bottom = 6.dp)
+                "老乡棋牌",
+                fontSize = 22.sp, fontWeight = FontWeight.Black,
+                color = Color.White,
+                style = androidx.compose.ui.text.TextStyle(
+                    shadow = androidx.compose.ui.graphics.Shadow(
+                        color = Color(0xB3260A3C),
+                        offset = androidx.compose.ui.geometry.Offset(1.5f, 2f),
+                        blurRadius = 6f
+                    )
+                )
             )
+            Text("斗地主 · 麻将 · 合集", fontSize = 9.sp, color = Color(0xCCE8D8FF))
         }
+        val iconSz = 40.dp
+        val iconY = fyr(50f) - iconSz / 2
+        val hallIcons = listOf(
+            Triple("帮助", 530f) { showHelp = true },
+            Triple("成就", 650f) { hallToast = "快去看看已取得的成就吧" },
+            Triple("奖励", 770f) { hallToast = "每天来玩就有奖励拿" },
+            Triple("分享", 1127f) { hallToast = "把快乐分享给老乡们" }
+        )
+        hallIcons.forEach { (label, x, act) ->
+            Box(
+                Modifier
+                    .align(Alignment.TopStart)
+                    .offset(x = fxr(x) - iconSz / 2, y = iconY)
+            ) { RefIconBtn(label, iconSz, act) }
+        }
+        Box(
+            Modifier
+                .align(Alignment.TopStart)
+                .offset(x = fxr(1220f) - 21.dp, y = iconY)
+        ) { SettingsGear { showSettings = true } }
+
+        // ---- 跑马灯（参考 APK gGameTips 原文提示语轮播）
+        RefMarquee(
+            "小提示：" + hallTips[tipIdx2],
+            Modifier
+                .align(Alignment.TopCenter)
+                .offset(y = fyr(96f))
+                .fillMaxWidth(0.5f)
+        )
+
+        // ---- 左下：NPC 地主小人 + 台词气泡（参考主页 mainCharacter(330,20) / 气泡(350,280)）
+        Column(
+            Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 26.dp, bottom = 4.dp),
+            horizontalAlignment = Alignment.Start
+        ) {
+            RefNpcBubble("地主", npcTips[tipIdx], tipAlpha.value)
+            RefNpcFigure(96.dp)
+        }
+
+        // ---- 四大模式方格 2x2（参考 HallScene 中心坐标，y-up→顶部原点：
+        //      休闲(680,270) 挑战(1050,268) 炸弹(730,535) 大师(1100,538)）
+        val tileW = SW * 0.27f
+        val tileH = if (SH * 0.265f < tileW * 0.55f) SH * 0.265f else tileW * 0.55f
+        @Composable
+        fun ModeTileAt(
+            cx: Float, cyTop: Float, title: String, gTop: Color, gBot: Color,
+            phase: Float, deco: (@Composable androidx.compose.foundation.layout.BoxScope.() -> Unit)? = null,
+            onClick: () -> Unit
+        ) {
+            Box(
+                Modifier
+                    .align(Alignment.TopStart)
+                    .offset(x = fxr(cx) - tileW / 2, y = fyr(cyTop) - tileH / 2)
+                    .size(tileW, tileH)
+            ) {
+                RefModeTile(title, gTop, gBot, phase, Modifier.fillMaxSize(), deco, onClick)
+            }
+        }
+        // 休闲（左上格）：单机斗地主
+        ModeTileAt(680f, 270f, "休闲模式", Color(0xFF6FCF4E), Color(0xFF2E8B2A), 0f) {
+            onSingle(aiLevel)
+        }
+        // 挑战（右上格）：困难 AI
+        ModeTileAt(1050f, 268f, "挑战模式", Color(0xFFFFA53E), Color(0xFFE2661B), 0.3f) {
+            onSingle(2)
+        }
+        // 炸弹（左下格）：局域网面对面开战（参考卡面：黑弹+火花+三张飞牌）
+        ModeTileAt(730f, 535f, "炸弹模式", Color(0xFFFF6E5E), Color(0xFFC62828), 0.85f, deco = {
+            Canvas(
+                Modifier
+                    .size(34.dp)
+                    .align(Alignment.TopEnd)
+                    .offset(x = (-10).dp, y = 10.dp)
+            ) {
+                drawCircle(Color(0xFF2B2B33), size.width * 0.30f, Offset(size.width * 0.46f, size.height * 0.58f))
+                drawRect(
+                    Color(0xFF55555F),
+                    Offset(size.width * 0.52f, size.height * 0.36f),
+                    androidx.compose.ui.geometry.Size(size.width * 0.14f, size.height * 0.09f)
+                )
+                drawCircle(Color(0xFFFFC94D), size.width * 0.05f, Offset(size.width * 0.66f, size.height * 0.28f))
+                drawCircle(Color(0xFFFF7A3D), size.width * 0.035f, Offset(size.width * 0.72f, size.height * 0.20f))
+            }
+        }) { showNetChooser = true }
+        // 大师（右下格）：棋牌合集
+        ModeTileAt(1100f, 538f, "大师模式", Color(0xFF9D7BFF), Color(0xFF5B3FBF), 0.6f) {
+            onCollection
+        }
+
+        // 版本号（参考主页右下角 infolabel）
+        Text(
+            "v1.6.1",
+            fontSize = 10.sp, color = Color(0x8CFFFFFF),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 12.dp, bottom = 6.dp)
+        )
+        // 音乐署名（CC BY 4.0 要求）：麻将 BGM = Ishikari Lore - Kevin MacLeod
+        Text(
+            "麻将背景音乐：Ishikari Lore · Kevin MacLeod (incompetech.com) · CC BY 4.0",
+            fontSize = 9.sp,
+            color = Color(0x59FFFFFF),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 6.dp)
+        )
+    }
 
         // ---------- 帮助弹层
         if (showHelp) {
@@ -687,7 +723,6 @@ fun LobbyScreen(
                 }
             )
         }
-    }
 }
 
 // ================================================================= 共享组件
@@ -701,10 +736,11 @@ private fun PlayerCapsule(
     wins: Int,
     losses: Int,
     onEditName: () -> Unit,
-    onPickAvatar: () -> Unit
+    onPickAvatar: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Row(
-        Modifier
+        modifier
             .clip(RoundedCornerShape(26.dp))
             .background(Color(0xCC14427E))
             .border(1.5.dp, Color(0xFF9CC4EE), RoundedCornerShape(26.dp))

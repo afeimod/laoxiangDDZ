@@ -155,28 +155,14 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             .fillMaxSize()
             .background(Color(0xFF101216))
     ) {
-        // ===== v1.6.0 桌面：参考 APK（麻将世界/血战麻将）全屏背景
-        //      （res/raw-assets 4d2a05e3…png 1334x750：街市场景 + 木纹桌面 + 中央东南西北罗盘） =====
+        // ===== v1.6.1 桌面：参考 APK（麻将世界/血战麻将）BG0 墨绿绒面全屏背景
+        //      （raw-assets 6f02d306…png 1334x750：纯墨绿渐变呢面+四周压暗，无景物无水印） =====
         Image(
-            painter = painterResource(R.drawable.mjw_table_bg),
+            painter = painterResource(R.drawable.mj_felt_bg),
             contentDescription = null,
             contentScale = ContentScale.FillBounds,
             modifier = Modifier.fillMaxSize()
         )
-        // 中央木桌微压暗（让牌河白牌在木桌上保持高对比；Canvas 以画面中心为渐变圆心）
-        Canvas(Modifier.fillMaxSize()) {
-            drawRect(
-                Brush.radialGradient(
-                    listOf(Color(0x32000000), Color(0x14000000), Color.Transparent),
-                    center = Offset(size.width / 2f, size.height / 2f),
-                    radius = size.minDimension * 0.62f
-                )
-            )
-        }
-
-        // 项目专属背景刻字水印（与其它玩法一致：老乡大众麻将/老乡红中癞子/老乡四川血战）
-        // 必须传 fillMaxSize 让内层 Box 撑满全屏并居中，否则会缩成内容大小贴在左上角
-        snapshot?.let { TableEngraving("老乡" + it.mode.label, Modifier.fillMaxSize()) }
 
         val W = maxWidth
         val H = maxHeight
@@ -341,13 +327,10 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         val left = seats[(mySeat + 3) % 4]
         val selected by vm.selected.collectAsState()
 
-        // ---- 开局仪式 v1.5.7：严格按参考视频时序 —— 方城先立 → 点击掷骰（3.2s 未点自动掷）
-        //      → 摇骰 1s（变面+旋转+弹跳）→ 定格 0.8s 亮点数 → 一摞一摞从牌墙发牌 → 开局 ----
-        // 旧 v1.5.6 把发牌与骰子并行、进局即飞牌，与视频「先骰后发」不符；本版改回视频顺序，
-        // 但方城 0.9s 内四面逐摞码出（v1.5.10 图2 布局+参考视频动画）、骰盒+呼吸提示常驻罗盘中心，桌面从第一帧起就是活的，
-        // 不会重现「全桌静止卡到掷骰」的观感；自动掷兜底保证永不卡死。
+        // ---- 开局仪式 v1.6.1（参考 APK：无方城、桌面干净）——点击掷骰（3.2s 未点自动掷）
+        //      → 摇骰 1s（变面+旋转+弹跳）→ 定格 0.8s 亮点数 → 四家手牌从中央骰台飞向落位 → 开局 ----
+        // 洗牌音由 MjFx.Shuffle 统一触发（不再 raw 重复播一遍）；方城码牌动画已按反馈移除。
         val deal = remember { Animatable(0f) }
-        val wallBuild = remember { Animatable(0f) }
         val kaijuAnim = remember { Animatable(0f) }
         val diceRoll = remember { Animatable(0f) }
         val diceFade = remember { Animatable(1f) }
@@ -368,7 +351,6 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             diceDone = false
             diceTapped = false
             deal.snapTo(0f)
-            wallBuild.snapTo(0f)
             diceRoll.snapTo(0f)
             diceFade.snapTo(1f)
             // 参考 APK「开局」金色圆环+大字闪现（kaiju_tex）
@@ -378,23 +360,20 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 delay(420)
                 kaijuAnim.animateTo(0f, tween(260))
             }
-            vm.sound.playRaw("mjw_sfx_xipai", 0.8f)
-            // 方城逐摞码出（参考视频 4.4-5.1s：四面同时、一摞一摞弹出，约 0.9s 立完整方城）
-            wallBuild.animateTo(1f, tween(900, easing = LinearEasing))
             // 待掷展示面（点击前不泄露引擎点数）
             diceShown = intArrayOf(Random.nextInt(1, 7), Random.nextInt(1, 7))
             // 骰子点数由引擎掷出（同时决定切墙位置，仪式与发牌一致）
             dicePair = if (snap.dice1 in 1..6 && snap.dice2 in 1..6) intArrayOf(snap.dice1, snap.dice2)
             else intArrayOf(Random.nextInt(1, 7), Random.nextInt(1, 7))
         }
-        // 掷骰 → 亮点 → 发牌（视频 6.5-11s：手摇骰盒 → LED 亮相 → 牌从墙飞向四家）
+        // 掷骰 → 亮点 → 发牌（参考 APK：手摇骰盒 → 亮相 → 牌从中央飞向四家）
         LaunchedEffect(snap.round, diceTapped) {
             if (!diceTapped) return@LaunchedEffect
             vm.sound.playRaw("mjw_sfx_dice", 0.9f)
             diceRoll.animateTo(1f, tween(1000, easing = LinearEasing))
             delay(800)                       // 定格展示点数
             diceDone = true
-            deal.animateTo(1f, tween(1200, easing = LinearEasing))   // 一摞一摞发牌
+            deal.animateTo(1f, tween(1200, easing = LinearEasing))   // 一槅一槅发牌
             dealDone = true
             vm.ceremonyFinished()
         }
@@ -448,86 +427,6 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             vm.opNotice.collect { t -> if (t != null) { toast = System.nanoTime() to t; vm.clearOpNotice() } }
         }
 
-        // ================= 牌墙方城 v1.5.10（按用户图2「指尖四川麻将」布局逐处重做） =================
-        // 布局（图2 实测）：四面墙连成闭合方环、围着中央牌河区；上下墙各 17 摞、左右墙各 9 摞
-        // （环容量 52 摞 ≥ 开局余牌 42 摞）。牌面 = 项目自有素材：上下墙 mj_wall（绿背立牌），
-        // 左右墙 mj_wall_r（横牌白端朝桌心，左墙镜像）—— 不再使用 v1.5.8 自绘黑色牌背。
-        // 缺口：自下墙右端逆时针消耗（下→左→上→右），显示摞数 = wallCount/2，发牌期间平滑消耗。
-        // 动画（参考视频 4.4-5.1s）：开局四面同时逐摞弹出（每摞 2.5 摞窗口的 scale+alpha），
-        // 发牌期间缺口从下墙右端生长 —— 牌从墙上一摞摞被摸走。
-        // v1.5.11 修复：环几何提升为共享常量 —— 发牌动画（四家手牌从对应墙摞起飞）与方城渲染
-        // 同源取坐标；v1.5.10 重写牌墙段时误删这组定义，导致 CI 七处 unresolved reference。
-        val ringL = fx(118f); val ringR = fx(682f)
-        val ringT = fy(112f); val ringB = fy(390f)
-        val bandHgt = fy(48f)                        // 上下墙厚（=立牌高，单位牌比例 0.75 与图2 一致）
-        val bandWid = fx(34f)                        // 左右墙厚
-        val wallXStart = ringL + bandWid             // 上/下墙横向范围（让开左右墙四角）
-        val wallRowW = ringR - bandWid - wallXStart  // 上下墙 17 摞总宽
-        val wallPitch = wallRowW / 17f               // 上下墙摞距
-        val wallYTop = ringT                         // 上墙 y（对家发牌起飞源）
-        val wallYBot = ringB - bandHgt               // 下墙 y（我方发牌起飞源）
-        val wallColL = ringL                         // 左墙 x（左家发牌起飞源）
-        val wallColR = ringR - bandWid               // 右墙 x（右家发牌起飞源）
-        run {
-            val hbX0 = wallXStart
-            val hbX1 = wallColR
-            val hbPitch = wallPitch
-            val vbY0 = ringT                             // 左右墙贯穿全高（四角由立柱补齐，环闭合）
-            val vbY1 = ringB
-            val vbPitch = (vbY1 - vbY0) / 9f
-            // 摞位（消耗序，图2 缺口位：自上墙左端起 → 右列 → 下墙 → 左列，
-            // 开局缺口露在上墙远端、我方面前下墙保持完整）
-            // 元组 = (x, y, 竖墙?, 左墙镜像?, 边内摞数, 边内序号)
-            val ringX1 = ringR - bandWid
-            val posList = ArrayList<Array<Any>>(52)
-            for (k in 0 until 17) posList.add(arrayOf(hbX0 + hbPitch * k, ringT, false, false, 17, k))
-            for (k in 0 until 9) posList.add(arrayOf(ringX1, vbY0 + vbPitch * k, true, false, 9, k))
-            for (k in 0 until 17) posList.add(arrayOf(hbX0 + hbPitch * (16 - k), ringB - bandHgt, false, false, 17, k))
-            for (k in 0 until 9) posList.add(arrayOf(ringL, vbY0 + vbPitch * (8 - k), true, true, 9, k))
-            val targetShown = (snap.wallCount / 2).coerceIn(0, 52)
-            val shownF = if (deal.value >= 1f) targetShown.toFloat()
-                         else 52f - (52f - targetShown) * deal.value
-            val buildP = wallBuild.value
-            posList.forEachIndexed { idx, p ->
-                if (idx < 52 - shownF) return@forEachIndexed         // 已消耗 → 缺口
-                val x = p[0] as Dp
-                val y = p[1] as Dp
-                val vert = p[2] as Boolean
-                val mirror = p[3] as Boolean
-                val sideN = p[4] as Int
-                val k = p[5] as Int
-                // 四面同时逐摞弹出（边内序号 k 越大越晚，全部在 buildP=1 时立完）
-                val ap = ((buildP * (sideN + 2.5f) - k) / 2.5f).coerceIn(0f, 1f)
-                if (ap <= 0.01f) return@forEachIndexed
-                Place(x, y) {
-                    Box(
-                        Modifier.graphicsLayer {
-                            alpha = ap
-                            val s = 0.55f + 0.45f * ap
-                            scaleX = if (mirror) -s else s
-                            scaleY = s
-                        }
-                    ) {
-                        if (vert) {
-                            Image(
-                                painter = painterResource(R.drawable.mj_wall_r),
-                                contentDescription = null,
-                                contentScale = ContentScale.FillBounds,
-                                modifier = Modifier.size(bandWid, vbPitch)
-                            )
-                        } else {
-                            Image(
-                                painter = painterResource(R.drawable.mj_wall),
-                                contentDescription = null,
-                                contentScale = ContentScale.FillBounds,
-                                modifier = Modifier.size(hbPitch - fy(3f), bandHgt)
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
         // ================= 顶部工具条（模式/癞子/余牌/离桌） =================
         Row(
             Modifier
@@ -569,14 +468,11 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             }
         }
 
-        // ================= 中央骰台（参考视频天凤凸台样式） =================
+        // ================= 中央骰台（参考 APK 中央净桌：仅骰盒+LED余牌，无风标无牌捗） =================
         // 黑色八角斜面凸台：圆角方座 + 八角斜面 + 中央凹井；
         // 凹井内：开局掷骰阶段显示双骰（点击凸台即掷），发牌后显示 LED 蓝色七段剩余牌数；
-        // 左下红色场风块（庄家方位）+ 灰色风位小块，凸台四角金色小钉装饰。
+        // 东南西北风位小块已按反馈移除（参考 APK 桌面无风标）。
         val plateSz = g(126f)
-        val dealerWind = charWind((snap.dealer - mySeat + 4) % 4)
-        val oppWind = charWind((mySeat + 2 - snap.dealer + 4) % 4)
-        val leftWind = charWind((mySeat + 3 - snap.dealer + 4) % 4)
         Box(
             Modifier
                 .align(Alignment.Center)
@@ -646,10 +542,6 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             } else if (!diceTapped || deal.value > 0f) {
                 Box(Modifier.align(Alignment.Center)) { SevenSegNum(snap.wallCount.coerceIn(0, 99), g(32f)) }
             }
-            // 左下红色场风块（庄家方位）+ 灰色风位块（对家/左家），天凤凸台风位标记样式
-            WindCornerChip(dealerWind, true, g(19f), Alignment.BottomStart, g(3f), g(3f))
-            WindCornerChip(oppWind, false, g(15f), Alignment.TopEnd, g(3f), g(3f))
-            WindCornerChip(leftWind, false, g(15f), Alignment.TopStart, g(3f), g(3f))
             // 点击掷骰（开局仪式：覆盖凸台的透明点击层）
             if (!diceTapped) {
                 Box(
@@ -675,8 +567,8 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                     .graphicsLayer { alpha = hintAlpha * diceFade.value }
             )
         }
-        // 「第 X 局」金色大字（参考视频「東一局」开场字样，掷骰开始后淡出）
-        if (!diceTapped && wallBuild.value > 0.9f) {
+        // 「第 X 局」金色大字（参考 APK 开场字样，掷骰开始后淡出）
+        if (!diceTapped) {
             Text(
                 "第 ${snap.round} 局",
                 color = Color(0xFFE8C860), fontSize = 40.sp, fontWeight = FontWeight.Black,
@@ -692,6 +584,8 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         if (win != null && deal.value >= 1f && snap.result == null) {
             var nowMs by remember(win.endAt) { mutableStateOf(System.currentTimeMillis()) }
             LaunchedEffect(win.endAt) {
+                // 参考 APK：轮到自己时响一声倒计时提示音（每窗一次）
+                vm.sound.playRaw("mjw_sfx_daojishi", 0.5f)
                 while (System.currentTimeMillis() < win.endAt) {
                     nowMs = System.currentTimeMillis(); delay(200)
                 }
@@ -751,9 +645,9 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                         alpha = 0.25f + 0.75f * p
                         val s = 0.7f + 0.3f * p
                         scaleX = s; scaleY = s
-                        // 从右列牌墙摞飞入落位
-                        translationX = (wallColR + g(5f) - fx(702f)).toPx() * (1f - p)
-                        translationY = (fy(210f) - fy(80f) - g(22f) * idx).toPx() * (1f - p)
+                        // 从中央骰台飞入落位（方城已移除）
+                        translationX = (W / 2 - fx(702f)).toPx() * (1f - p)
+                        translationY = (H / 2 - fy(80f) - g(22f) * idx).toPx() * (1f - p)
                     }
                 ) { MjBackTile(1, u) }
             }
@@ -796,9 +690,9 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                         alpha = 0.25f + 0.75f * p
                         val s = 0.7f + 0.3f * p
                         scaleX = s; scaleY = s
-                        // 从上排牌墙摞飞入落位
-                        translationX = (wallXStart + wallRowW / 2f - fx(200f) - g(32f) * idx).toPx() * (1f - p)
-                        translationY = (wallYTop + g(20f) - fy(78f)).toPx() * (1f - p)
+                        // 从中央骰台飞入落位（方城已移除）
+                        translationX = (W / 2 - fx(200f) - g(32f) * idx).toPx() * (1f - p)
+                        translationY = (H / 2 - fy(78f)).toPx() * (1f - p)
                     }
                 ) { MjBackTile(2, u) }
             }
@@ -871,9 +765,9 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                             alpha = 0.25f + 0.75f * p
                             val s = 0.7f + 0.3f * p
                             scaleX = s; scaleY = s
-                            // 从左列牌墙摞飞入落位
-                            translationX = (wallColL + g(5f) - fx(86f)).toPx() * (1f - p)
-                            translationY = (fy(200f) - handTop - g(22f) * idx).toPx() * (1f - p)
+                            // 从中央骰台飞入落位（方城已移除）
+                            translationX = (W / 2 - fx(86f)).toPx() * (1f - p)
+                            translationY = (H / 2 - handTop - g(22f) * idx).toPx() * (1f - p)
                         }
                     ) { MjBackTile(3, u) }
                 }
@@ -981,9 +875,9 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                                 1f - (1f - xx) * (1f - xx) * (1f - xx)
                             }
                             if (e < 1f) {
-                                // 从下排牌墙摞起飞（与牌墙方城同源，一摞一摞发到手）
-                                val srcX = wallXStart + wallPitch * (if ((idx / 4) % 2 == 0) 4f else 12f)
-                                val srcY = wallYBot + g(10f)
+                                // 从中央骰台起飞（一墩一墩发到手，方城已移除）
+                                val srcX = W / 2 + g(30f) * (if ((idx / 4) % 2 == 0) 1f else -1f)
+                                val srcY = H / 2 + g(14f)
                                 translationX = (srcX - xStart - bigW * idx).toPx() * (1f - e)
                                 translationY = (srcY - yHand).toPx() * (1f - e)
                                 val s = 0.5f + 0.5f * e
