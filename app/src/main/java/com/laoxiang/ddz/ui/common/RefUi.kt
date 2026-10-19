@@ -180,14 +180,15 @@ fun RefMarquee(text: String, modifier: Modifier = Modifier) {
 
 /** 简笔地主小人（主页 NPC 占位：斗笠+笑脸，Canvas 手绘避免加密素材缺口） */
 @Composable
-fun RefNpcFigure(size: Dp = 120.dp, modifier: Modifier = Modifier) {
+fun RefNpcFigure(figSize: Dp = 120.dp, modifier: Modifier = Modifier) {
     val t = rememberInfiniteTransition(label = "npc")
     val bob by t.animateFloat(
         initialValue = -1f, targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(1600, easing = LinearEasing), RepeatMode.Reverse),
         label = "bob"
     )
-    Canvas(modifier.size(size).offset(y = (bob * 3).dp)) {
+    Canvas(modifier.size(figSize).offset(y = (bob * 3).dp)) {
+        // 注：参数已改名 figSize，此处 size 才能正确解析到 DrawScope.size（像素尺寸）
         val s = size.width
         // 身体（红袍）
         drawRoundRect(
