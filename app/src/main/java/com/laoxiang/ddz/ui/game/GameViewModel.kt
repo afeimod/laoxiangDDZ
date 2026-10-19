@@ -46,7 +46,7 @@ data class ChatBubble(val seat: Int, val text: String, val at: Long)
 
 class GameViewModel(app: Application) : AndroidViewModel(app), NetRoomUi {
 
-    private val sound = (app as LaoXiangApp).sound
+    val sound = (app as LaoXiangApp).sound
     val prefs = Prefs(app)
 
     // ------------------------------------------------ 公开状态

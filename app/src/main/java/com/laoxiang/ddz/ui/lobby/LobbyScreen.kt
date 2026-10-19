@@ -4,7 +4,10 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -37,11 +41,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.laoxiang.ddz.R
 import com.laoxiang.ddz.ui.common.AvatarImage
+import com.laoxiang.ddz.ui.common.RefIconBtn
+import com.laoxiang.ddz.ui.common.RefMarquee
+import com.laoxiang.ddz.ui.common.RefModeButton
+import com.laoxiang.ddz.ui.common.RefNpcBubble
+import com.laoxiang.ddz.ui.common.RefNpcFigure
 import com.laoxiang.ddz.ui.game.GameViewModel
 import com.laoxiang.ddz.ui.game.TableBg
 import com.laoxiang.ddz.ui.room.NET_GAMES
 import com.laoxiang.ddz.ui.theme.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -88,172 +98,232 @@ fun LobbyScreen(
         }
     }
 
+    // ---------- 大厅 BGM（参考 APK：bg1.mp3；素材包切到 "ddz"） ----------
+    val appCtx = LocalContext.current.applicationContext
+    DisposableEffect(Unit) {
+        val sound = (appCtx as com.laoxiang.ddz.LaoXiangApp).sound
+        val oldPack = sound.pack
+        sound.pack = com.laoxiang.ddz.audio.SoundManager.PACK_DDZ
+        sound.startBgm(key = "ddz_bgm_1")
+        onDispose {
+            sound.pack = oldPack
+            sound.stopBgm()
+        }
+    }
+
+    // ---------- NPC 台词轮播（参考主页 UI_shouye_dhk 提示气泡，8s 淡入淡出） ----------
+    val npcTips = listOf(
+        "欢迎回来！来几局斗地主吧",
+        "棋牌合集上新：跑得快 / 掼蛋 / 升级",
+        "麻将血战开局，点击掷骰子",
+        "两台手机连同一个 WiFi 就能联机"
+    )
+    var tipIdx by remember { mutableStateOf(0) }
+    val tipAlpha = remember { Animatable(1f) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(7000)
+            tipAlpha.animateTo(0f, tween(900))
+            tipIdx = (tipIdx + 1) % npcTips.size
+            tipAlpha.animateTo(1f, tween(900))
+        }
+    }
+    var hallToast by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(hallToast) {
+        if (hallToast != null) { delay(1600); hallToast = null }
+    }
+    var showHelp by remember { mutableStateOf(false) }
+
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFF6CB4F3))
+            .background(Color(0xFF2B1B4D))
     ) {
-        // 全屏浅蓝天空主城背景
+        // 参考斗地主 APK 主页背景（login/hallbg.jpg 1280x720 游乐园夜场）
         Image(
-            painter = painterResource(R.drawable.bg_lobby),
+            painter = painterResource(R.drawable.ddz_hall_bg),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
         )
-        // 顶部微亮 / 底部微沉
+        // 顶部提亮 / 底部压暗（保文字可读）
         Box(
             Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        listOf(Color(0x26FFFFFF), Color(0x00FFFFFF), Color(0x2E0E3A6E))
+                        listOf(Color(0x1FFFFFFF), Color(0x00FFFFFF), Color(0x521A0E38))
                     )
                 )
         )
 
-        // ================= 横屏布局（App 已锁横屏，单套布局） =================
         Column(
+            Modifier
+                .fillMaxSize()
+                .systemBarsPadding()
+        ) {
+            // ---- 顶栏：玩家胶囊 + 品牌 + 金圈功能排（参考主页 右上设置/分享位）
+            Row(
                 Modifier
-                    .fillMaxSize()
-                    .systemBarsPadding()
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    PlayerCapsule(
-                        avatar = avatar, nickname = nickname,
-                        beans = prefs.beans, wins = prefs.wins, losses = prefs.losses,
-                        onEditName = { showNicknameEditor = true },
-                        onPickAvatar = { showAvatarPicker = true }
-                    )
-                    Spacer(Modifier.weight(1f))
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            "老乡斗地主",
-                            fontSize = 22.sp, fontWeight = FontWeight.Black,
-                            color = Color.White,
-                            style = androidx.compose.ui.text.TextStyle(
-                                shadow = androidx.compose.ui.graphics.Shadow(
-                                    color = Color(0xFF12305C),
-                                    offset = androidx.compose.ui.geometry.Offset(1f, 2f),
-                                    blurRadius = 5f
-                                )
+                PlayerCapsule(
+                    avatar = avatar, nickname = nickname,
+                    beans = prefs.beans, wins = prefs.wins, losses = prefs.losses,
+                    onEditName = { showNicknameEditor = true },
+                    onPickAvatar = { showAvatarPicker = true }
+                )
+                Spacer(Modifier.weight(1f))
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        "老乡棋牌",
+                        fontSize = 22.sp, fontWeight = FontWeight.Black,
+                        color = Color.White,
+                        style = androidx.compose.ui.text.TextStyle(
+                            shadow = androidx.compose.ui.graphics.Shadow(
+                                color = Color(0xB3260A3C),
+                                offset = androidx.compose.ui.geometry.Offset(1.5f, 2f),
+                                blurRadius = 6f
                             )
                         )
-                        Text("棋牌合集 · 局域网联机", fontSize = 9.sp, color = Color(0xCCE8F2FF))
-                    }
-                    Spacer(Modifier.weight(1f))
+                    )
+                    Text("斗地主 · 麻将 · 合集", fontSize = 9.sp, color = Color(0xCCE8D8FF))
+                }
+                Spacer(Modifier.weight(1f))
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    RefIconBtn("帮助", 40.dp) { showHelp = true }
+                    RefIconBtn("奖励", 40.dp) { hallToast = "每天来玩就有奖励拿" }
+                    RefIconBtn("分享", 40.dp) { hallToast = "把快乐分享给老乡们" }
                     SettingsGear { showSettings = true }
                 }
+            }
 
-                Spacer(Modifier.weight(0.55f))
+            // ---- 跑马灯公告（参考大厅 Notice 条）
+            RefMarquee(
+                "欢迎来到老乡棋牌！斗地主、四川血战麻将、跑得快、掼蛋、升级……全部免费开打",
+                Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .fillMaxWidth(0.72f)
+                    .padding(top = 2.dp)
+            )
 
-                // ---- 三大方格：快速开始 / 本地联机 / 棋牌合集
-                val config = LocalConfiguration.current
-                val cellH = (config.screenHeightDp.dp * 0.42f).coerceIn(190.dp, 280.dp)
-                val levelLabel = listOf("简单", "中等", "困难")[aiLevel.coerceIn(0, 2)]
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 22.dp),
-                    horizontalArrangement = Arrangement.spacedBy(13.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // ① 快速开始（斗地主）
-                    HomeCell(
-                        modifier = Modifier.weight(1f),
-                        height = cellH,
-                        background = Brush.verticalGradient(
-                            listOf(Color(0xFFFFC94D), Color(0xFFF0821E))
-                        ),
-                        borderColor = Color(0x66FFFFFF),
-                        title = "快速开始",
-                        titleColor = Color.White,
-                        subtitle = "斗地主 · 电脑$levelLabel",
-                        subColor = Color(0xCFFFFFF3E0),
-                        badge = "一键开局",
+            Spacer(Modifier.weight(1f))
+
+            // ---- 左下：NPC 小人 + 台词气泡（参考主页人物位）
+            Row(
+                Modifier
+                    .align(Alignment.Start)
+                    .padding(start = 18.dp),
+                verticalAlignment = Alignment.Bottom
+            ) {
+                RefNpcFigure(108.dp)
+                Spacer(Modifier.width(6.dp))
+                RefNpcBubble("房东大妈", npcTips[tipIdx], tipAlpha.value)
+            }
+
+            Spacer(Modifier.weight(1.1f))
+
+            // ---- 右侧四大模式按钮（参考主页 挑战/休闲/大师/炸弹 2x2 浮动布局）
+            val levelLabel = listOf("简单", "中等", "困难")[aiLevel.coerceIn(0, 2)]
+            Column(
+                Modifier
+                    .align(Alignment.End)
+                    .padding(end = 26.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    RefModeButton(
+                        title = "休闲模式", subtitle = "斗地主 · 电脑$levelLabel",
+                        gradTop = Color(0xFF6FCF4E), gradBottom = Color(0xFF2E8B2A),
+                        floatPhase = 0f,
                         onClick = { onSingle(aiLevel) }
-                    ) {
-                        Image(
-                            painter = painterResource(R.drawable.fan_cards),
-                            contentDescription = null,
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier.height(cellH * 0.42f)
-                        )
-                    }
-
-                    // ② 本地联机
-                    HomeCell(
-                        modifier = Modifier.weight(1f),
-                        height = cellH,
-                        background = Brush.verticalGradient(
-                            listOf(Color(0xF7FFFFFF), Color(0xFFE8F2FF))
-                        ),
-                        borderColor = Color(0xFFBFD9F5),
-                        title = "本地联机",
-                        titleColor = Color(0xFF14427E),
-                        subtitle = "开一桌 · 加入牌局",
-                        subColor = Color(0xFF6B83A3),
-                        badge = "面对面",
-                        onClick = { showNetChooser = true }
-                    ) {
-                        Box(
-                            Modifier
-                                .size(cellH * 0.34f)
-                                .clip(CircleShape)
-                                .background(
-                                    Brush.verticalGradient(
-                                        listOf(Color(0xFF5B8BE8), Color(0xFF3A63C0))
-                                    )
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                "⇆",
-                                fontSize = (cellH.value * 0.14f).sp,
-                                fontWeight = FontWeight.Black,
-                                color = Color.White
-                            )
-                        }
-                    }
-
-                    // ③ 棋牌合集
-                    HomeCell(
-                        modifier = Modifier.weight(1f),
-                        height = cellH,
-                        background = Brush.verticalGradient(
-                            listOf(Color(0xFFF7FFFFFF), Color(0xFFFFF1DC))
-                        ),
-                        borderColor = Color(0xFFC9A25E),
-                        title = "棋牌合集",
-                        titleColor = Color(0xFF8E1414),
-                        subtitle = "跑得快 · 持续上新",
-                        subColor = Color(0xFF9A7B52),
-                        badge = "NEW",
+                    )
+                    RefModeButton(
+                        title = "挑战模式", subtitle = "斗地主 · 困难AI",
+                        gradTop = Color(0xFFFFA53E), gradBottom = Color(0xFFE2661B),
+                        floatPhase = 0.3f,
+                        onClick = { onSingle(2) }
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    RefModeButton(
+                        title = "大师模式", subtitle = "跑得快 · 掼蛋 · 麻将",
+                        gradTop = Color(0xFF9D7BFF), gradBottom = Color(0xFF5B3FBF),
+                        floatPhase = 0.6f,
                         onClick = onCollection
-                    ) {
-                        Image(
-                            painter = painterResource(R.drawable.pdk_icon),
-                            contentDescription = null,
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier.height(cellH * 0.42f)
+                    )
+                    RefModeButton(
+                        title = "炸弹场", subtitle = "局域网 · 面对面开战",
+                        gradTop = Color(0xFFFF6E5E), gradBottom = Color(0xFFC62828),
+                        floatPhase = 0.85f,
+                        badge = {
+                            // 炸弹小徽（参考主页 U_icon_zhadan：黑弹+火花）
+                            Canvas(Modifier.size(30.dp)) {
+                                drawCircle(Color(0xFF2B2B33), size.width * 0.30f, Offset(size.width * 0.46f, size.height * 0.58f))
+                                drawRect(
+                                    Color(0xFF55555F),
+                                    Offset(size.width * 0.52f, size.height * 0.36f),
+                                    androidx.compose.ui.geometry.Size(size.width * 0.14f, size.height * 0.09f)
+                                )
+                                drawCircle(Color(0xFFFFC94D), size.width * 0.05f, Offset(size.width * 0.66f, size.height * 0.28f))
+                                drawCircle(Color(0xFFFF7A3D), size.width * 0.035f, Offset(size.width * 0.72f, size.height * 0.20f))
+                            }
+                        },
+                        onClick = { showNetChooser = true }
+                    )
+                }
+            }
+
+            Spacer(Modifier.weight(0.35f))
+
+            // 音乐署名（CC BY 4.0 要求）：麻将 BGM = Ishikari Lore - Kevin MacLeod
+            Text(
+                "麻将背景音乐：Ishikari Lore · Kevin MacLeod (incompetech.com) · CC BY 4.0",
+                fontSize = 9.sp,
+                color = Color(0x59FFFFFF),
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(bottom = 6.dp)
+            )
+        }
+
+        // ---------- 帮助弹层
+        if (showHelp) {
+            AlertDialog(
+                onDismissRequest = { showHelp = false },
+                confirmButton = {
+                    TextButton(onClick = { showHelp = false }) {
+                        Text("知道啦", color = DeepRed, fontWeight = FontWeight.Bold)
+                    }
+                },
+                title = { Text("玩法说明", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                        Text(
+                            "休闲/挑战模式：经典斗地主单机，电脑难度在设置里调；挑战模式直接上困难 AI。" +
+                                "\n\n大师模式：棋牌合集，跑得快、掼蛋、升级、锄大地、大众麻将、癞子麻将、" +
+                                "四川血战麻将任选。\n\n炸弹场：局域网联机，两台手机连同一个 WiFi/热点，" +
+                                "一人开桌一人串门就能面对面开战。",
+                            fontSize = 13.sp, color = Color(0xFF4A3A20)
                         )
                     }
                 }
+            )
+        }
 
-                Spacer(Modifier.weight(0.55f))
-
-                // 音乐署名（CC BY 4.0 要求）：麻将 BGM = Ishikari Lore - Kevin MacLeod
+        hallToast?.let { t ->
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    "麻将背景音乐：Ishikari Lore · Kevin MacLeod (incompetech.com) · CC BY 4.0",
-                    fontSize = 9.sp,
-                    color = Color(0x59FFFFFF),
-                    modifier = Modifier.padding(bottom = 6.dp)
+                    t, color = Color.White, fontSize = 14.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(Color(0xAA000000))
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
                 )
             }
+        }
 
         // ---------- 昵称修改弹层
         if (showNicknameEditor) {

@@ -3,7 +3,10 @@ package com.laoxiang.ddz.ui.game
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -54,8 +57,13 @@ fun GameScreen(gameVm: GameViewModel, onExit: () -> Unit) {
     val snapshot by gameVm.snapshot.collectAsState()
     val snap = snapshot ?: run {
         Box(Modifier.fillMaxSize()) {
-            // 等待页也用玩家自选的牌桌背景
-            TableBackground(bgKey = gameVm.prefs.tableBg, modifier = Modifier.fillMaxSize())
+            // 等待页同样用参考 APK 对局背景
+            Image(
+                painter = painterResource(R.drawable.ddz_game_bg),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
             Box(
                 Modifier
                     .fillMaxSize()
@@ -158,6 +166,14 @@ fun GameScreen(gameVm: GameViewModel, onExit: () -> Unit) {
         }
     }
 
+    // ---------- 参考 APK 素材包：斗地主音效/语音/背景乐（进对局切入，退场恢复） ----------
+    DisposableEffect(Unit) {
+        val sound = gameVm.sound
+        val oldPack = sound.pack
+        sound.pack = com.laoxiang.ddz.audio.SoundManager.PACK_DDZ
+        onDispose { sound.pack = oldPack }
+    }
+
     // ---------- 发牌动画：新一局手牌逐张翻出，每张同步“啩嗒”声；地主拿底牌时补发增量 ----------
     var animRound by remember { mutableStateOf(-1) }
     var dealtShown by remember { mutableStateOf(0) }
@@ -190,12 +206,42 @@ fun GameScreen(gameVm: GameViewModel, onExit: () -> Unit) {
                     translationX = shake.value.dp.toPx()
                 }
         ) {
-            // 牌桌背景：预设 4 款 / 相册自定义（v12 多元化背景）
-            TableBackground(
-                bgKey = gameVm.prefs.tableBg,
-                modifier = Modifier.fillMaxSize(),
-                engraving = "老乡斗地主"
+            // 参考斗地主 APK 对局背景（ui/common/roombg1.jpg 1280x720 城市天际线）
+            Image(
+                painter = painterResource(R.drawable.ddz_game_bg),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
             )
+            // 光斑云影缓移（参考 APK 船只巡航动效位的桌面活感）
+            val drift = rememberInfiniteTransition(label = "cloud")
+            val dx by drift.animateFloat(
+                initialValue = -0.3f, targetValue = 1.3f,
+                animationSpec = infiniteRepeatable(
+                    tween(34000, easing = androidx.compose.animation.core.LinearEasing)
+                ), label = "cloudX"
+            )
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { translationX = dx * size.width }
+            ) {
+                Box(
+                    Modifier
+                        .offset(x = 60.dp, y = 40.dp)
+                        .size(width = 150.dp, height = 44.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Color(0x14FFFFFF))
+                )
+                Box(
+                    Modifier
+                        .offset(x = 250.dp, y = 92.dp)
+                        .size(width = 90.dp, height = 28.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Color(0x10FFFFFF))
+                )
+            }
+            TableEngraving("老乡斗地主", Modifier.fillMaxSize())
 
             LandscapeTable(
                 snap = snap, me = me, next = next, prev = prev,
@@ -642,11 +688,12 @@ private fun SeatPlayArea(
     }
 }
 
+// 参考 APK 按钮配色：主操作绿底（btn_bg_green），副操作黄底（btn_bg_yellow）
 private fun bluePillBrush(): Brush =
-    Brush.verticalGradient(listOf(Color(0xFF5B8BE8), Color(0xFF3A63C0)))
+    Brush.verticalGradient(listOf(Color(0xFFFFD54F), Color(0xFFF9A825)))
 
 private fun orangePillBrush(): Brush =
-    Brush.verticalGradient(listOf(Color(0xFFFFC24D), Color(0xFFF07E1E)))
+    Brush.verticalGradient(listOf(Color(0xFF66D15C), Color(0xFF2E8B2A)))
 
 /** 欢乐斗地主式大胶囊按钮 */
 @Composable

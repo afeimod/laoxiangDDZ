@@ -50,7 +50,7 @@ data class MjTurnWindow(val endAt: Long, val totalMs: Long)
  */
 class MjViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val sound = (app as LaoXiangApp).sound
+    val sound = (app as LaoXiangApp).sound
     val prefs = Prefs(app)
 
     val snapshot = MutableStateFlow<MjSnapshot?>(null)

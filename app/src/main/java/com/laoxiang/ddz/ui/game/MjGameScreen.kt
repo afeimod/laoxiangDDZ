@@ -155,13 +155,24 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             .fillMaxSize()
             .background(Color(0xFF101216))
     ) {
-        // ===== v1.5.8 桌面：天凤参考视频深黑桌面（炭黑呢面 + 牌河区灰描线 + 左右金色装饰柱） =====
+        // ===== v1.6.0 桌面：参考 APK（麻将世界/血战麻将）全屏背景
+        //      （res/raw-assets 4d2a05e3…png 1334x750：街市场景 + 木纹桌面 + 中央东南西北罗盘） =====
         Image(
-            painter = painterResource(R.drawable.mj_table_dark),
+            painter = painterResource(R.drawable.mjw_table_bg),
             contentDescription = null,
             contentScale = ContentScale.FillBounds,
             modifier = Modifier.fillMaxSize()
         )
+        // 中央木桌微压暗（让牌河白牌在木桌上保持高对比；Canvas 以画面中心为渐变圆心）
+        Canvas(Modifier.fillMaxSize()) {
+            drawRect(
+                Brush.radialGradient(
+                    listOf(Color(0x32000000), Color(0x14000000), Color.Transparent),
+                    center = Offset(size.width / 2f, size.height / 2f),
+                    radius = size.minDimension * 0.62f
+                )
+            )
+        }
 
         // 项目专属背景刻字水印（与其它玩法一致：老乡大众麻将/老乡红中癞子/老乡四川血战）
         // 必须传 fillMaxSize 让内层 Box 撑满全屏并居中，否则会缩成内容大小贴在左上角
@@ -337,6 +348,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         // 不会重现「全桌静止卡到掷骰」的观感；自动掷兜底保证永不卡死。
         val deal = remember { Animatable(0f) }
         val wallBuild = remember { Animatable(0f) }
+        val kaijuAnim = remember { Animatable(0f) }
         val diceRoll = remember { Animatable(0f) }
         val diceFade = remember { Animatable(1f) }
         var dicePair by remember { mutableStateOf(intArrayOf(5, 3)) }
@@ -344,6 +356,13 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         var dealDone by remember { mutableStateOf(false) }
         var diceDone by remember { mutableStateOf(false) }
         var diceTapped by remember { mutableStateOf(false) }
+        // 参考 APK 素材包：血战音效/语音/背景乐（进对局切入，退场恢复）
+        DisposableEffect(Unit) {
+            val sound = vm.sound
+            val oldPack = sound.pack
+            sound.pack = com.laoxiang.ddz.audio.SoundManager.PACK_MJ
+            onDispose { sound.pack = oldPack }
+        }
         LaunchedEffect(snap.round) {
             dealDone = false
             diceDone = false
@@ -352,6 +371,14 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             wallBuild.snapTo(0f)
             diceRoll.snapTo(0f)
             diceFade.snapTo(1f)
+            // 参考 APK「开局」金色圆环+大字闪现（kaiju_tex）
+            kaijuAnim.snapTo(0.35f)
+            launch {
+                kaijuAnim.animateTo(1.12f, tween(240))
+                delay(420)
+                kaijuAnim.animateTo(0f, tween(260))
+            }
+            vm.sound.playRaw("mjw_sfx_xipai", 0.8f)
             // 方城逐摞码出（参考视频 4.4-5.1s：四面同时、一摞一摞弹出，约 0.9s 立完整方城）
             wallBuild.animateTo(1f, tween(900, easing = LinearEasing))
             // 待掷展示面（点击前不泄露引擎点数）
@@ -363,6 +390,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
         // 掷骰 → 亮点 → 发牌（视频 6.5-11s：手摇骰盒 → LED 亮相 → 牌从墙飞向四家）
         LaunchedEffect(snap.round, diceTapped) {
             if (!diceTapped) return@LaunchedEffect
+            vm.sound.playRaw("mjw_sfx_dice", 0.9f)
             diceRoll.animateTo(1f, tween(1000, easing = LinearEasing))
             delay(800)                       // 定格展示点数
             diceDone = true
@@ -393,8 +421,8 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                             System.nanoTime(),
                             when (f.kind) {
                                 "CHI" -> R.drawable.mj_fx_chi
-                                "PENG" -> R.drawable.mj_fx_peng
-                                else -> R.drawable.mj_fx_gang
+                                "PENG" -> R.drawable.mjw_win_peng
+                                else -> R.drawable.mjw_win_gang
                             },
                             ""
                         )
@@ -402,8 +430,9 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                     }
                     is MjFx.Hu -> {
                         bigFx = Triple(
-                            System.nanoTime(), R.drawable.mj_fx_hu,
-                            if (f.selfDraw) "自摸" else ""
+                            System.nanoTime(),
+                            if (f.selfDraw) R.drawable.mjw_win_zimo else R.drawable.mjw_win_dianpao,
+                            ""
                         )
                         flashBig(bigScale)
                     }
@@ -1028,7 +1057,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (snap.myHu && dealDone) {
                     // 自摸胡：摸牌后已能胡时直接亮出胡按钮（用户反馈"已胡无提示"）
-                    MjImageButton(R.drawable.mj_btn_hu, 46.dp) {
+                    MjDiamondButton(R.drawable.mjw_win_he_diamond, 52.dp) {
                         val err = vm.selfHu()
                         if (err != null) toast = System.nanoTime() to err
                     }
@@ -1046,7 +1075,7 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                     }
                 }
                 if (myTurn && snap.awaitingDiscard && dealDone) {
-                    MjRectButton(R.drawable.mj_btn_hint, 30.dp) {
+                    MjDiamondButton(R.drawable.mjw_btn_ting, 52.dp) {
                         val err = vm.hint()
                         if (err != null) toast = System.nanoTime() to err
                     }
@@ -1086,13 +1115,13 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                                         }
                                         MjImageButton(R.drawable.mj_btn_chi, 46.dp) { vm.doClaim(opt) }
                                     }
-                                    "HU" -> MjImageButton(R.drawable.mj_btn_hu, 46.dp) { vm.doClaim(opt) }
-                                    "GANG" -> MjImageButton(R.drawable.mj_btn_gang, 46.dp) { vm.doClaim(opt) }
-                                    "PENG" -> MjImageButton(R.drawable.mj_btn_peng, 46.dp) { vm.doClaim(opt) }
+                                    "HU" -> MjDiamondButton(R.drawable.mjw_win_he_diamond, 52.dp) { vm.doClaim(opt) }
+                                    "GANG" -> MjDiamondButton(R.drawable.mjw_btn_gang, 52.dp) { vm.doClaim(opt) }
+                                    "PENG" -> MjDiamondButton(R.drawable.mjw_btn_peng, 52.dp) { vm.doClaim(opt) }
                                 }
                             }
                             if (ri == claimRows.lastIndex) {
-                                MjImageButton(R.drawable.mj_btn_pass, 42.dp) { vm.passClaim() }
+                                MjDiamondButton(R.drawable.mjw_btn_guo, 52.dp) { vm.passClaim() }
                             }
                         }
                     }
@@ -1108,9 +1137,10 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                     .padding(bottom = bigH + g(40f)),
                 horizontalArrangement = Arrangement.spacedBy(18.dp)
             ) {
-                MjSuitCircle(0, "万", listOf(Color(0xFFEF6A5A), Color(0xFFB3271D)), 46.dp) { vm.dingque(it) }
-                MjSuitCircle(2, "条", listOf(Color(0xFF63D8B8), Color(0xFF1D8574)), 46.dp) { vm.dingque(it) }
-                MjSuitCircle(1, "筒", listOf(Color(0xFFFFB84D), Color(0xFFD97A16)), 46.dp) { vm.dingque(it) }
+                // 参考 APK 万/条/筒 圆钮素材（a78d9192 sheet）
+                MjSuitImageButton(R.drawable.mjw_suit_0, 54.dp) { vm.dingque(0) }
+                MjSuitImageButton(R.drawable.mjw_suit_1, 54.dp) { vm.dingque(2) }
+                MjSuitImageButton(R.drawable.mjw_suit_3, 54.dp) { vm.dingque(1) }
             }
         }
 
@@ -1152,6 +1182,34 @@ fun MjGameScreen(vm: MjViewModel, onExit: () -> Unit) {
                 onAgain = { vm.again() },
                 onExit = onExit
             )
+        }
+
+        // ================= 开局特效（参考 APK kaiju：金环缩放 + 「开局」大字） =================
+        if (kaijuAnim.value > 0.01f) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.graphicsLayer {
+                        val v = kaijuAnim.value
+                        scaleX = v; scaleY = v; alpha = v.coerceIn(0f, 1f)
+                    }
+                ) {
+                    Image(
+                        painter = painterResource(R.drawable.mjw_fx_kaiju_ring),
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.size(150.dp)
+                    )
+                    Image(
+                        painter = painterResource(R.drawable.mjw_fx_kaiju_text),
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .size(width = 190.dp, height = 70.dp)
+                            .offset(y = (-104).dp)
+                    )
+                }
+            }
         }
 
         // ================= 特效层 =================
@@ -1326,6 +1384,20 @@ internal fun MjImageButton(res: Int, size: Dp, onClick: () -> Unit) {
     )
 }
 
+/** 素材菱形按钮（参考 APK 碰/杠/听/过/和，原始图不裁形，只加投影） */
+@Composable
+internal fun MjDiamondButton(res: Int, size: Dp, onClick: () -> Unit) {
+    Image(
+        painter = painterResource(res),
+        contentDescription = null,
+        contentScale = ContentScale.FillBounds,
+        modifier = Modifier
+            .size(size)
+            .shadow(5.dp)
+            .clickable(onClick = onClick)
+    )
+}
+
 /** 素材横条按钮（提示/出牌/换三张，原始比例 126:72） */
 @Composable
 internal fun MjRectButton(res: Int, h: Dp, onClick: () -> Unit) {
@@ -1383,6 +1455,20 @@ internal fun NumDigits(value: Int, h: Dp) {
     }
 }
 
+/** 参考 APK 万/条/筒 素材圆钮（定缺选择） */
+@Composable
+internal fun MjSuitImageButton(res: Int, size: Dp, onPick: () -> Unit) {
+    Image(
+        painter = painterResource(res),
+        contentDescription = null,
+        contentScale = ContentScale.Fit,
+        modifier = Modifier
+            .size(size)
+            .shadow(6.dp, CircleShape)
+            .clickable(onClick = onPick)
+    )
+}
+
 /** 定缺三色圆钮 */
 @Composable
 internal fun MjSuitCircle(suit: Int, label: String, colors: List<Color>, size: Dp, onPick: (Int) -> Unit) {
@@ -1426,15 +1512,29 @@ private fun MjResultOverlay(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.padding(horizontal = 40.dp)
         ) {
-            Text(
-                when {
-                    result.liuju -> "流 局"
-                    iWon -> "赢 了 ！"
-                    else -> "输 了 …"
-                },
-                fontSize = 36.sp, fontWeight = FontWeight.Black,
-                color = if (iWon) Color(0xFFFFD54F) else if (result.liuju) Color(0xFFB0BEC5) else Color(0xFFFF8A80)
-            )
+            if (result.liuju) {
+                Text(
+                    "流 局", fontSize = 34.sp, fontWeight = FontWeight.Black,
+                    color = Color(0xFFB0BEC5)
+                )
+            } else if (iWon) {
+                // 参考 APK 结算红飘带（369aa43f 胜利横幅）
+                Image(
+                    painter = painterResource(R.drawable.mjw_banner_win),
+                    contentDescription = "胜利",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.height(64.dp)
+                )
+            } else {
+                // 失败：参考 APK 金描边特效字
+                Text(
+                    "失 败", fontSize = 36.sp, fontWeight = FontWeight.Black,
+                    style = androidx.compose.ui.text.TextStyle(
+                        brush = Brush.verticalGradient(listOf(Color(0xFFB3E5FC), Color(0xFF4A90D9))),
+                        shadow = androidx.compose.ui.graphics.Shadow(Color(0xFF123A6E), Offset(2f, 2.5f), 3f)
+                    )
+                )
+            }
             Spacer(Modifier.height(4.dp))
             Text(
                 if (result.note.isNotEmpty()) "${snap.mode.label} · ${result.note}"
