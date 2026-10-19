@@ -81,7 +81,7 @@ fun RefModeTile(
                 .clip(RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp))
                 .background(Color(0x2EFFFFFF))
         )
-        deco?.invoke()
+        deco?.invoke(this)
         // 参考卡面只有模式名美术字（副标题一律不臆造）
         Text(
             title,

@@ -217,19 +217,19 @@ fun LobbyScreen(
         }
         val iconSz = 40.dp
         val iconY = fyr(50f) - iconSz / 2
-        val hallIcons = listOf(
-            Triple("帮助", 530f) { showHelp = true },
-            Triple("成就", 650f) { hallToast = "快去看看已取得的成就吧" },
-            Triple("奖励", 770f) { hallToast = "每天来玩就有奖励拿" },
-            Triple("分享", 1127f) { hallToast = "把快乐分享给老乡们" }
-        )
-        hallIcons.forEach { (label, x, act) ->
+        // 参考主页图标位（HallScene 实测 x：帮助530 成就650 奖励770 分享1127 设置1220）
+        @Composable
+        fun IconAt(label: String, x: Float, act: () -> Unit) {
             Box(
                 Modifier
                     .align(Alignment.TopStart)
                     .offset(x = fxr(x) - iconSz / 2, y = iconY)
             ) { RefIconBtn(label, iconSz, act) }
         }
+        IconAt("帮助", 530f) { showHelp = true }
+        IconAt("成就", 650f) { hallToast = "快去看看已取得的成就吧" }
+        IconAt("奖励", 770f) { hallToast = "每天来玩就有奖励拿" }
+        IconAt("分享", 1127f) { hallToast = "把快乐分享给老乡们" }
         Box(
             Modifier
                 .align(Alignment.TopStart)
