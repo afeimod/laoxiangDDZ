@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 资源收缩白名单：
      牌面(card_*)与头像(avatar_*)经 resources.getIdentifier() 动态加载，
-     语音(voice_*)同样经 getIdentifier() 批量注册，
-     压缩器无法静态识别引用，若不显式保留将在 release 构建中被删除 -->
+     语音(voice_*)同样经 getIdentifier() 批量注册；
+     斗地主参考素材(ddz_*)与麻将参考素材(mjw_*)在 SoundManager 里按名字
+     动态查找播放（remap/playRaw/loadLazy），压缩器无法静态识别引用，
+     若不显式保留将在 release 构建中被整体删除——曾导致 release 包
+     叫/抢地主、出牌等全部音效丢失，此白名单即为修复。
+     sfx_*/bgm_* 虽有静态引用，一并保留以防后续重构改为动态查找。 -->
 <resources xmlns:tools="http://schemas.android.com/tools"
-    tools:keep="@drawable/avatar_*,@drawable/card_*,@raw/voice_*" />
+    tools:keep="@drawable/avatar_*,@drawable/card_*,@raw/voice_*,@raw/sfx_*,@raw/bgm_*,@raw/ddz_*,@raw/mjw_*" />

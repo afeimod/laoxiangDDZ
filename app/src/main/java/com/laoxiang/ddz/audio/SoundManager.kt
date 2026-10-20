@@ -17,11 +17,19 @@ import kotlin.random.Random
  *                 音效、normal_t/b/w 万条筒报牌、xz_local 四川话 胡/碰/杠/花猪 语音
  *  pack = "default" 项目原有 TTS/合成音效（其它玩法与兜底）
  *
+ * v1.6.2 音效修复（release 包全哑 bug 的三重修复）：
+ *  1) keep.xml 补全 @raw/ddz_* / @raw/mjw_* 白名单（此前被资源收缩整体删除）；
+ *  2) pack 切换时按前缀整包预加载（SoundPool.load 异步，等真正要播才 load
+ *     会因"样本尚未解码完"而首次播放无声）；
+ *  3) 修复 lazyIds 缓存 0（素材缺失）后 play 直接拿 0 号样本静音、
+ *     且不再走回退音效的 bug —— 现在缺素材/未就绪一律回退原始 key，
+ *     永不无声。
+ *
  * 素材映射（res/raw）：
  *  —— 斗地主参考 APK ——
  *  ddz_bgm_1/2/3          大厅/对局 BGM（bg1-3.mp3）
  *  ddz_sfx_button/chupai/dealcards/feiji/lose/rocket/spring/win/xuanpai/ya/zhadan/baojing
- *  ddz_vm_* / ddz_vw_*    男/女声：3..17（点数）、jdz1-6（叫地主）、buyao1-4（不要）、
+ *  ddz_vm_* / ddz_vw_*    男/女声：3..17（点数）、jdz1-6（叫/抢地主）、buyao1-4（不要）、
  *                         pair3-15（对子）、cardtype3-14（单张）、baojing1-2、jb1-3
  *  —— 麻将参考 APK ——
  *  mjw_bgm_hall / mjw_bgm_game      大厅 / 血战 BGM
@@ -46,6 +54,17 @@ class SoundManager(private val context: Context) {
         const val PACK_DEFAULT = "default"
         const val PACK_DDZ = "ddz"
         const val PACK_MJ = "mj"
+
+        /**
+         * 各素材包需要整包预加载的 res/raw 文件名前缀（BGM 走 MediaPlayer 不算）。
+         * ddz 只需要当前音色那一半语音（vm=男 / vw=女），按前缀精确加载省一半内存；
+         * mj 的报牌/动作语音两种音色都会随机用到，整包加载。
+         */
+        private fun packPrefixes(pack: String, gender: String): List<String> = when (pack) {
+            PACK_DDZ -> listOf("ddz_sfx_", "ddz_$gender" + "_")
+            PACK_MJ -> listOf("mjw_sfx_", "mjw_v_normal_", "mjw_v_xz_")
+            else -> emptyList()
+        }
     }
 
     private val pool: SoundPool = SoundPool.Builder()
@@ -58,18 +77,36 @@ class SoundManager(private val context: Context) {
         )
         .build()
 
+    /** 常驻默认音效（app 启动即加载） */
     private val ids = HashMap<String, Int>()
+    /** 素材包（ddz_/mjw_）音效：pack 切换时批量预加载；value=0 表示确认缺失 */
     private val lazyIds = HashMap<String, Int>()
+    /** SoundPool.load 是异步的：只记录真正解码完成的样本，未就绪的一律回退兜底音 */
+    private val readyIds = HashSet<Int>()
     private var bgm: MediaPlayer? = null
     private var bgmKey: String = ""
     @Volatile
     var soundEnabled = true
     @Volatile
     var musicEnabled = true
-    @Volatile
+    /**
+     * 当前素材包：设置时自动整包预加载，进对局前就把音备好，杜绝首次播放无声。
+     * 读写均在主线程（Compose DisposableEffect 设置 / viewModelScope(Main) 播放）。
+     */
     var pack: String = PACK_DEFAULT
+        set(value) {
+            field = value
+            try {
+                preloadPack(value)
+            } catch (_: Throwable) {
+                // 预加载失败不阻断流程：播放时还有懒加载 + 回退兜底两层保险
+            }
+        }
 
     init {
+        pool.setOnLoadCompleteListener { _, sampleId, status ->
+            if (status == 0) synchronized(readyIds) { readyIds.add(sampleId) }
+        }
         ids["play"] = pool.load(context, R.raw.sfx_play, 1)
         ids["select"] = pool.load(context, R.raw.sfx_select, 1)
         ids["shuffle"] = pool.load(context, R.raw.sfx_shuffle, 1)
@@ -179,40 +216,74 @@ class SoundManager(private val context: Context) {
         }
     }
 
+    // ------------------------------------------------ 播放（带回退，永不无声）
+
     fun play(key: String, volume: Float = 1f) {
         if (!soundEnabled) return
         val actual = remap(key)
-        val id = ids[actual] ?: lazyIds[actual] ?: loadLazy(actual) ?: run {
-            // 素材包缺失时退回原 key（保证永不出声）
-            if (actual != key) return playFallback(key, volume)
+        val id = sampleOf(actual)
+        if (id != null && isReady(id)) {
+            pool.play(id, volume, volume, 1, 0, 1f)
             return
         }
-        pool.play(id, volume, volume, 1, 0, 1f)
+        // 样本缺失（id==null）或仍在异步解码中（未就绪）→ 回退原始素材，保证有声
+        if (actual != key) playFallback(key, volume)
     }
 
     private fun playFallback(key: String, volume: Float) {
         val id = ids[key] ?: return
+        if (!isReady(id)) return   // 兜底样本自身未就绪（仅 app 启动头几十毫秒），放弃本次
         pool.play(id, volume, volume, 1, 0, 1f)
     }
 
     /** 直接播素材包原始音效（各界面专用，如骰子/开局/杠上花） */
     fun playRaw(name: String, volume: Float = 1f) {
         if (!soundEnabled) return
-        val id = ids[name] ?: lazyIds[name] ?: loadLazy(name) ?: return
+        val id = sampleOf(name) ?: return
+        if (!isReady(id)) return   // 未解码完：宁可不播也不叠错音
         pool.play(id, volume, volume, 1, 0, 1f)
     }
 
+    /** 取样本：常驻表 → 素材包缓存 → 懒加载；缺失记 0 防反复重查 */
+    private fun sampleOf(name: String): Int? {
+        ids[name]?.let { return it }
+        if (lazyIds.containsKey(name)) return lazyIds[name]?.takeIf { it != 0 }
+        return loadLazy(name)
+    }
+
+    private fun isReady(id: Int): Boolean = synchronized(readyIds) { id in readyIds }
+
     private fun loadLazy(name: String): Int? {
-        if (lazyIds.containsKey(name)) return lazyIds[name]
         if (!name.matches(Regex("[a-z0-9_]+"))) return null
         val resId = context.resources.getIdentifier(name, "raw", context.packageName)
         if (resId == 0) {
-            lazyIds[name] = 0
+            synchronized(lazyIds) { lazyIds[name] = 0 }
             return null
         }
         val sid = pool.load(context, resId, 1)
-        lazyIds[name] = sid
+        synchronized(lazyIds) { lazyIds[name] = sid }
         return sid
+    }
+
+    // ------------------------------------------------ 素材包预加载
+
+    /**
+     * 整包预加载：反射枚举 R.raw 全部文件名，按前缀批量 load（跳过 BGM——走 MediaPlayer）。
+     * 在进入大厅/对局（pack 切换）时调用，用户点第一张牌之前所有音效已就绪。
+     */
+    private fun preloadPack(pack: String) {
+        val prefixes = packPrefixes(pack, voiceGender)
+        if (prefixes.isEmpty()) return
+        val fields = R.raw::class.java.fields
+        for (f in fields) {
+            val name = f.name
+            if (name == "keep") continue
+            if (prefixes.any { name.startsWith(it) } && !name.contains("bgm")) {
+                if (!ids.containsKey(name) && !lazyIds.containsKey(name)) {
+                    loadLazy(name)
+                }
+            }
+        }
     }
 
     // ------------------------------------------------ BGM

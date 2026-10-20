@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -18,11 +19,14 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.laoxiang.ddz.LaoXiangApp
 import com.laoxiang.ddz.R
+import com.laoxiang.ddz.audio.SoundManager
 import com.laoxiang.ddz.data.MjMode
 import com.laoxiang.ddz.data.PdkMode
 import com.laoxiang.ddz.ui.theme.Gold
@@ -40,6 +44,18 @@ fun CollectionScreen(
     onPlayShengji: () -> Unit = {},
     onPlayMj: (MjMode) -> Unit = {}
 ) {
+    // 与大厅同源的斗地主素材包：按钮点击音（进页切入，退场恢复）
+    val appCtx = LocalContext.current.applicationContext
+    DisposableEffect(Unit) {
+        val sound = (appCtx as? LaoXiangApp)?.sound
+        val oldPack = sound?.pack ?: SoundManager.PACK_DEFAULT
+        sound?.pack = SoundManager.PACK_DDZ
+        onDispose { sound?.pack = oldPack }
+    }
+    // 统一按钮点击音（ddz 包映射到 ddz_sfx_button）
+    fun clickSfx() {
+        (appCtx as? LaoXiangApp)?.sound?.play("button", 0.8f)
+    }
     Box(
         Modifier
             .fillMaxSize()
@@ -75,7 +91,7 @@ fun CollectionScreen(
                         .clip(RoundedCornerShape(13.dp))
                         .background(Color(0x33FFFFFF))
                         .border(1.dp, Color(0x66FFFFFF), RoundedCornerShape(13.dp))
-                        .clickable(onClick = onBack),
+                        .clickable(onClick = { clickSfx(); onBack() }),
                     contentAlignment = Alignment.Center
                 ) {
                     Text("←", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
@@ -274,6 +290,8 @@ private fun GameCard(
     desc: String,
     onClick: () -> Unit
 ) {
+    // 进卡点击音（与大厅一致，ddz 包映射到 ddz_sfx_button）
+    val appCtx = LocalContext.current.applicationContext
     Row(
         Modifier
             .fillMaxWidth()
@@ -281,7 +299,10 @@ private fun GameCard(
             .clip(RoundedCornerShape(18.dp))
             .background(Color(0xF2FFFFFF))
             .border(1.5.dp, Color(0x33C9A25E), RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick)
+            .clickable(onClick = {
+                (appCtx as? LaoXiangApp)?.sound?.play("button", 0.8f)
+                onClick()
+            })
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

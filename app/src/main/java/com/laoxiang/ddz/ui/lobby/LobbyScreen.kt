@@ -57,7 +57,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * 大厅主页（v13 重设计）：浅蓝天空场景，横屏单套布局。
- * 顶栏（玩家胶囊+品牌+设置）→ 三大方格：快速开始 / 本地联机 / 棋牌合集；
+ * 顶栏（玩家胶囊+品牌+设置）→ 四大方格：快速游戏 / 大众麻将 / 联机对战 / 棋牌合集；
  * 电脑难度在设置弹层中调整。
  */
 @Composable
@@ -66,7 +66,8 @@ fun LobbyScreen(
     onSingle: (Int) -> Unit,
     onHost: (String) -> Unit,
     onJoin: () -> Unit,
-    onCollection: () -> Unit
+    onCollection: () -> Unit,
+    onMjDazhong: () -> Unit = {}
 ) {
     val prefs = gameVm.prefs
     var nickname by remember { mutableStateOf(prefs.nickname) }
@@ -111,13 +112,13 @@ fun LobbyScreen(
         }
     }
 
-    // ---------- NPC 台词轮播（参考 APK homeNpcTips 原文，淡入淡出） ----------
+    // ---------- NPC 台词轮播（参考 APK homeNpcTips 原文风格，淡入淡出） ----------
     val npcTips = listOf(
         "欢迎您！亲爱的玩家！",
         "欢迎回来！",
-        "连炸不够爽？就去炸弹模式！",
-        "成为炸弹王者！\n就可以体验4连炸了！",
-        "都是小菜一碟？快去\n挑战模式试试吧！",
+        "想和老乡面对面开黑？就去联机对战！",
+        "两个人同一个WiFi，\n就能面对面开战了！",
+        "牌瘾犯了？快去\n大众麻将试试手气吧！",
         "喜欢，记得分享给朋友噢~",
         "快去看看现在已取得哪些\n成就了吧~"
     )
@@ -137,10 +138,10 @@ fun LobbyScreen(
         "在设置面板里面可以取消出牌倒计时！",
         "点击头像有惊喜哟！您可以设置新的头像！",
         "随意领取游戏道具（看底牌、金币翻倍等）",
-        "炸弹模式可以出连炸，比王炸大，倍率8倍起",
-        "春天3倍，王炸4倍，二连炸4倍、三连炸8倍、四连炸16倍...",
-        "完成炸弹王者成就后，系统会给玩家发4连炸！",
-        "炸弹模式机器人被赢光后，每次加的钱只有1万！"
+        "联机对战支持斗地主/掼蛋/跑得快/锄大地等全系列玩法",
+        "春天3倍，王炸4倍，炸弹翻倍刺激得很...",
+        "棋牌合集里还有跑得快、掼蛋、升级、锄大地！",
+        "大众麻将可以吃碰杠，一炮多响更热闹！"
     )
     var tipIdx2 by remember { mutableStateOf(0) }
     LaunchedEffect(Unit) {
@@ -224,7 +225,7 @@ fun LobbyScreen(
                 Modifier
                     .align(Alignment.TopStart)
                     .offset(x = fxr(x) - iconSz / 2, y = iconY)
-            ) { RefIconBtn(label, iconSz, act) }
+            ) { RefIconBtn(label, iconSz) { gameVm.sfx("button", 0.8f); act() } }
         }
         IconAt("帮助", 530f) { showHelp = true }
         IconAt("成就", 650f) { hallToast = "快去看看已取得的成就吧" }
@@ -234,7 +235,7 @@ fun LobbyScreen(
             Modifier
                 .align(Alignment.TopStart)
                 .offset(x = fxr(1220f) - 21.dp, y = iconY)
-        ) { SettingsGear { showSettings = true } }
+        ) { SettingsGear { gameVm.sfx("button", 0.8f); showSettings = true } }
 
         // ---- 跑马灯（参考 APK gGameTips 原文提示语轮播）
         RefMarquee(
@@ -256,8 +257,8 @@ fun LobbyScreen(
             RefNpcFigure(96.dp)
         }
 
-        // ---- 四大模式方格 2x2（参考 HallScene 中心坐标，y-up→顶部原点：
-        //      休闲(680,270) 挑战(1050,268) 炸弹(730,535) 大师(1100,538)）
+        // ---- 四大模式方格 2x2（参考 HallScene 布局：
+        //      快速游戏(680,270) 大众麻将(1050,268) 联机对战(730,535) 棋牌合集(1100,538)）
         val tileW = SW * 0.27f
         val tileH = if (SH * 0.265f < tileW * 0.55f) SH * 0.265f else tileW * 0.55f
         @Composable
@@ -275,40 +276,107 @@ fun LobbyScreen(
                 RefModeTile(title, gTop, gBot, phase, Modifier.fillMaxSize(), deco, onClick)
             }
         }
-        // 休闲（左上格）：单机斗地主
-        ModeTileAt(680f, 270f, "休闲模式", Color(0xFF6FCF4E), Color(0xFF2E8B2A), 0f) {
+        // 快速游戏（左上格）：单机斗地主，一键开局
+        ModeTileAt(680f, 270f, "快速游戏", Color(0xFF6FCF4E), Color(0xFF2E8B2A), 0f) {
+            gameVm.sfx("button", 0.85f)
             onSingle(aiLevel)
         }
-        // 挑战（右上格）：困难 AI
-        ModeTileAt(1050f, 268f, "挑战模式", Color(0xFFFFA53E), Color(0xFFE2661B), 0.3f) {
-            onSingle(2)
-        }
-        // 炸弹（左下格）：局域网面对面开战（参考卡面：黑弹+火花+三张飞牌）
-        ModeTileAt(730f, 535f, "炸弹模式", Color(0xFFFF6E5E), Color(0xFFC62828), 0.85f, deco = {
+        // 大众麻将（右上格）：一键开打大众麻将（带番推倒胡 · 吃碰杠）
+        ModeTileAt(1050f, 268f, "大众麻将", Color(0xFFFFA53E), Color(0xFFE2661B), 0.3f, deco = {
+            // 麻将牌装饰：两叠牌错落 + 一张立牌
+            Canvas(
+                Modifier
+                    .size(36.dp)
+                    .align(Alignment.TopEnd)
+                    .offset(x = (-10).dp, y = 8.dp)
+            ) {
+                val w = size.width
+                val h = size.height
+                // 底下两张平叠的牌
+                drawRoundRect(
+                    Color(0xFF123A6E),
+                    topLeft = Offset(w * 0.10f, h * 0.58f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.38f, h * 0.26f),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.05f)
+                )
+                drawRoundRect(
+                    Color(0xFF1E5AA8),
+                    topLeft = Offset(w * 0.50f, h * 0.58f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.38f, h * 0.26f),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.05f)
+                )
+                // 一张立起来的牌 + 牌面圆点
+                drawRoundRect(
+                    Color(0xFFF6EEDC),
+                    topLeft = Offset(w * 0.30f, h * 0.14f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.34f, h * 0.48f),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.04f)
+                )
+                drawCircle(Color(0xFFC0392B), w * 0.07f, Offset(w * 0.47f, h * 0.36f))
+            }
+        }) { gameVm.sfx("button", 0.85f); onMjDazhong() }
+        // 联机对战（左下格）：局域网面对面开战（两台手机 + WiFi 信号）
+        ModeTileAt(730f, 535f, "联机对战", Color(0xFFFF6E5E), Color(0xFFC62828), 0.85f, deco = {
             Canvas(
                 Modifier
                     .size(34.dp)
                     .align(Alignment.TopEnd)
                     .offset(x = (-10).dp, y = 10.dp)
             ) {
-                drawCircle(Color(0xFF2B2B33), size.width * 0.30f, Offset(size.width * 0.46f, size.height * 0.58f))
-                drawRect(
-                    Color(0xFF55555F),
-                    Offset(size.width * 0.52f, size.height * 0.36f),
-                    androidx.compose.ui.geometry.Size(size.width * 0.14f, size.height * 0.09f)
+                val w = size.width
+                val h = size.height
+                // 左手机（圆角矩形 + 屏幕）
+                drawRoundRect(
+                    Color(0xFF2B2B33),
+                    topLeft = Offset(w * 0.02f, h * 0.30f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.34f, h * 0.58f),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.05f)
                 )
-                drawCircle(Color(0xFFFFC94D), size.width * 0.05f, Offset(size.width * 0.66f, size.height * 0.28f))
-                drawCircle(Color(0xFFFF7A3D), size.width * 0.035f, Offset(size.width * 0.72f, size.height * 0.20f))
+                drawRoundRect(
+                    Color(0xFF7FD8FF),
+                    topLeft = Offset(w * 0.06f, h * 0.36f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.26f, h * 0.34f),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.02f)
+                )
+                // 右手机
+                drawRoundRect(
+                    Color(0xFF2B2B33),
+                    topLeft = Offset(w * 0.64f, h * 0.30f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.34f, h * 0.58f),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.05f)
+                )
+                drawRoundRect(
+                    Color(0xFFFFD97A),
+                    topLeft = Offset(w * 0.68f, h * 0.36f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.26f, h * 0.34f),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.02f)
+                )
+                // 中间 WiFi 信号弧
+                val arcColor = Color(0xFFB9F6CA)
+                drawArc(
+                    arcColor, startAngle = -60f, sweepAngle = 120f, useCenter = false,
+                    topLeft = Offset(w * 0.28f, h * 0.06f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.44f, h * 0.44f),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = w * 0.05f)
+                )
+                drawArc(
+                    arcColor, startAngle = -60f, sweepAngle = 120f, useCenter = false,
+                    topLeft = Offset(w * 0.38f, h * 0.16f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.24f, h * 0.24f),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = w * 0.05f)
+                )
+                drawCircle(arcColor, w * 0.035f, Offset(w * 0.50f, h * 0.26f))
             }
-        }) { showNetChooser = true }
-        // 大师（右下格）：棋牌合集
-        ModeTileAt(1100f, 538f, "大师模式", Color(0xFF9D7BFF), Color(0xFF5B3FBF), 0.6f) {
+        }) { gameVm.sfx("button", 0.85f); showNetChooser = true }
+        // 棋牌合集（右下格）：跑得快/掼蛋/升级/锄大地/麻将全系列
+        ModeTileAt(1100f, 538f, "棋牌合集", Color(0xFF9D7BFF), Color(0xFF5B3FBF), 0.6f) {
+            gameVm.sfx("button", 0.85f)
             onCollection
         }
 
         // 版本号（参考主页右下角 infolabel）
         Text(
-            "v1.6.1",
+            "v1.6.2",
             fontSize = 10.sp, color = Color(0x8CFFFFFF),
             modifier = Modifier
                 .align(Alignment.BottomEnd)
@@ -338,9 +406,10 @@ fun LobbyScreen(
                 text = {
                     Column(Modifier.verticalScroll(rememberScrollState())) {
                         Text(
-                            "休闲/挑战模式：经典斗地主单机，电脑难度在设置里调；挑战模式直接上困难 AI。" +
-                                "\n\n大师模式：棋牌合集，跑得快、掼蛋、升级、锄大地、大众麻将、癞子麻将、" +
-                                "四川血战麻将任选。\n\n炸弹场：局域网联机，两台手机连同一个 WiFi/热点，" +
+                            "快速游戏：经典斗地主单机一键开局，电脑难度在设置里调。" +
+                                "\n\n大众麻将：带番推倒胡，吃碰杠、一炮多响。" +
+                                "\n\n棋牌合集：跑得快、掼蛋、升级、锄大地、大众麻将、癞子麻将、" +
+                                "四川血战麻将任选。\n\n联机对战：局域网联机，两台手机连同一个 WiFi/热点，" +
                                 "一人开桌一人串门就能面对面开战。",
                             fontSize = 13.sp, color = Color(0xFF4A3A20)
                         )

@@ -45,7 +45,11 @@ import com.laoxiang.ddz.ui.theme.LaoXiangDDZTheme
 
 /**
  * 老乡斗地主 主界面
- * 页面流：大厅 →（房间 | 全系列对局 | 棋牌合集 → 各对局）→ 结算 → 返回
+ * 页面流：大厅 →（快速游戏 | 大众麻将 | 房间 | 棋牌合集 → 各对局）→ 结算 → 返回
+ *   · 快速游戏：单机斗地主一键开局（原休闲模式/快速游戏入口）
+ *   · 大众麻将：大厅一键开打大众麻将（原挑战模式入口）
+ *   · 联机对战：局域网开房/串门（原炸弹模式入口）
+ *   · 棋牌合集：全系列玩法选台（原大师模式入口）
  * v20：本地联机扩展到全系列纸牌（掼蛋/升级/跑得快/锄大地走 NetLobby；斗地主沿用原链路）
  * 全屏沉浸：隐藏状态栏与导航栏，从屏幕边缘上/下滑可临时呼出
  */
@@ -266,7 +270,12 @@ fun LaoXiangRoot() {
                 roomOwner = "net"     // 串门浏览页 = NetLobby（跨游戏列表 + 手动 IP 选玩法）
                 page = Page.ROOM
             },
-            onCollection = { page = Page.COLLECTION }
+            onCollection = { page = Page.COLLECTION },
+            // 大众麻将：大厅一键开打（右上网格），与棋牌合集里的大众麻将同一引擎
+            onMjDazhong = {
+                mjVm.start(MjMode.DAZHONG)
+                page = Page.MAHJONG
+            }
         )
     }
 }
